@@ -33,6 +33,7 @@ defmodule KafkaEx.ConsumerGroup.Heartbeat do
   end
 
   def start_link(options) do
+    self() |> IO.inspect(label: "#{__MODULE__}.start_link")
     GenServer.start_link(__MODULE__, options)
   end
 
@@ -43,6 +44,7 @@ defmodule KafkaEx.ConsumerGroup.Heartbeat do
         worker_name: worker_name,
         heartbeat_interval: heartbeat_interval
       }) do
+    self() |> IO.inspect(label: "#{__MODULE__}.init")
     heartbeat_request = %HeartbeatRequest{
       group_name: group_name,
       member_id: member_id,
@@ -66,7 +68,10 @@ defmodule KafkaEx.ConsumerGroup.Heartbeat do
           heartbeat_interval: heartbeat_interval
         } = state
       ) do
-    case KafkaEx.heartbeat(heartbeat_request, worker_name: worker_name) do
+    self() |> IO.inspect(label: "#{__MODULE__}.handle_info :timeout, worker_name:#{inspect worker_name}, self")
+    res = KafkaEx.heartbeat(heartbeat_request, worker_name: worker_name)
+    |> IO.inspect(label: "#{__MODULE__}.handle_info heartbeat res")
+    case res do
       %HeartbeatResponse{error_code: :no_error} ->
         {:noreply, state, heartbeat_interval}
 
@@ -79,6 +84,10 @@ defmodule KafkaEx.ConsumerGroup.Heartbeat do
       %HeartbeatResponse{error_code: error_code} ->
         Logger.warn("Heartbeat failed, got error code #{error_code}")
         {:stop, {:shutdown, {:error, error_code}}, state}
+
+      {:error, :timeout} ->
+        Logger.warn("Heartbeat failed, got error :timeout")
+        {:stop, {:shutdown, {:error, :timeout}}, state}
     end
   end
 end

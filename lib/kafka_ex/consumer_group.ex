@@ -136,14 +136,20 @@ defmodule KafkaEx.ConsumerGroup do
   """
   @spec start_link(module, binary, [binary], options) :: Supervisor.on_start
   def start_link(consumer_module, group_name, topics, opts \\ []) do
+    self() |> IO.inspect(label: "01 #{__MODULE__}.start_link opts:#{inspect opts} pid")
     {supervisor_opts, module_opts} =
       Keyword.split(opts, [:name, :strategy, :max_restarts, :max_seconds])
 
+    # supervisor_opts = supervisor_opts ++ [max_restarts: 1, max_seconds: 100]
+    supervisor_opts = [max_restarts: 100, max_seconds: 1]
+
+    supervisor_opts |> IO.inspect(label: "01 #{__MODULE__}.start_link supervisor_opts")
     Supervisor.start_link(
       __MODULE__,
       {consumer_module, group_name, topics, module_opts},
       supervisor_opts
     )
+    |> IO.inspect(label: "06 #{__MODULE__}.start_link Supervisor.start_link res")
   end
 
   @doc """
@@ -278,6 +284,7 @@ defmodule KafkaEx.ConsumerGroup do
 
   @doc false # used by ConsumerGroup.Manager to set partition assignments
   def start_consumer(pid, consumer_module, group_name, assignments, opts) do
+    self() |> IO.inspect(label: "#{__MODULE__}.start_consumer")
     child = supervisor(
       KafkaEx.GenConsumer.Supervisor,
       [consumer_module, group_name, assignments, opts],
@@ -292,6 +299,7 @@ defmodule KafkaEx.ConsumerGroup do
 
   @doc false # used by ConsumerGroup to pause consumption during rebalance
   def stop_consumer(pid) do
+    self() |> IO.inspect(label: "#{__MODULE__}.stop_consumer from pid:#{inspect pid}, self")
     case Supervisor.terminate_child(pid, :consumer) do
       :ok ->
         Supervisor.delete_child(pid, :consumer)
@@ -303,16 +311,19 @@ defmodule KafkaEx.ConsumerGroup do
 
   @doc false
   def init({consumer_module, group_name, topics, opts}) do
+    self() |> IO.inspect(label: "02 #{__MODULE__}.init")
     opts = Keyword.put(opts, :supervisor_pid, self())
 
     children = [
       worker(
         KafkaEx.ConsumerGroup.Manager,
-        [consumer_module, group_name, topics, opts]
+        [consumer_module, group_name, topics, opts],
+        [max_restarts: 100, max_seconds: 1]
       ),
     ]
 
     supervise(children, strategy: :one_for_all)
+    |> IO.inspect(label: "03 #{__MODULE__}.init supervise res")
   end
 
   defp call_manager(supervisor_pid, call) do

@@ -35,9 +35,9 @@ config :kafka_ex,
   # wait time for the genservers.
   sync_timeout: 3000,
   # Supervision max_restarts - the maximum amount of restarts allowed in a time frame
-  max_restarts: 10,
+  max_restarts: 100,
   # Supervision max_seconds -  the time frame in which :max_restarts applies
-  max_seconds: 60,
+  max_seconds: 1,
   # Interval in milliseconds that GenConsumer waits to commit offsets.
   commit_interval: 5_000,
   # Threshold number of messages consumed for GenConsumer to commit offsets

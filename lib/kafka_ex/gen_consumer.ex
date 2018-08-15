@@ -408,6 +408,8 @@ defmodule KafkaEx.GenConsumer do
     options
   ) :: GenServer.on_start
   def start_link(consumer_module, group_name, topic, partition, opts \\ []) do
+    self() |> IO.inspect(label: "#{__MODULE__}.start_link consumer_module:#{inspect consumer_module}, pid")
+
     {server_opts, consumer_opts} =
       Keyword.split(opts, [:debug, :name, :timeout, :spawn_opt])
 
@@ -416,6 +418,7 @@ defmodule KafkaEx.GenConsumer do
       {consumer_module, group_name, topic, partition, consumer_opts},
       server_opts
     )
+    |> IO.inspect(label: "#{__MODULE__}.start_link res")
   end
 
   @doc """
@@ -475,12 +478,20 @@ defmodule KafkaEx.GenConsumer do
       Application.get_env(:kafka_ex, :auto_offset_reset, @auto_offset_reset)
     )
 
+    # IRV: calls our init here:
+    self() |> IO.inspect(label: "#{__MODULE__}.init create_worker")
     {:ok, consumer_state} = consumer_module.init(topic, partition)
     worker_opts = Keyword.take(opts, [:uris])
-    {:ok, worker_name} = KafkaEx.create_worker(
+
+    # Process.flag(:trap_exit, true)
+
+    res = KafkaEx.create_worker(
+      # KafkaEx.GenConsumer,
       :no_name,
       [consumer_group: group_name] ++ worker_opts
     )
+    |> IO.inspect(label: "#{__MODULE__}.init create_worker res")
+    {:ok, worker_name} = res
 
     default_fetch_options = [
       auto_commit: false,
@@ -505,7 +516,7 @@ defmodule KafkaEx.GenConsumer do
 
     Process.flag(:trap_exit, true)
 
-    {:ok, state, 0}
+    {:ok, state, 1000}
   end
 
   def handle_call(:partition, _from, state) do
@@ -554,6 +565,7 @@ defmodule KafkaEx.GenConsumer do
     :timeout,
     %State{current_offset: nil, last_commit: nil, worker_name: worker_name} = state
   ) do
+    IO.puts("#{__MODULE__}.handle_info timeout1")
     new_state =
       if KafkaEx.ready?(worker_name) do
         %State{
@@ -568,12 +580,26 @@ defmodule KafkaEx.GenConsumer do
   end
 
   def handle_info(:timeout, %State{} = state) do
+    self() |> IO.inspect(label: "#{__MODULE__}.handle_info :timeout2 self")
+
+  #   Process.send_after(self(), :consume, 1000)
+
+  #   {:noreply, state}
+  # end
+
+  # # We have to process the GenServer.call/2 within seperate message than :timeout
+  # # incase the call instead timesout
+  # def handle_info(:consume,  %State{} = state) do
+  #   self() |> IO.inspect(label: "#{__MODULE__}.handle_info :consume self")
+
     new_state = consume(state)
 
     case new_state do
       {:stop, reason} ->
+        self() |> IO.inspect(label: "#{__MODULE__}.handle_info :consume consume stop")
         {:stop, reason, state, 100}
       new_state ->
+        self() |> IO.inspect(label: "#{__MODULE__}.handle_info :consume consume ok")
         {:noreply, new_state, 100}
     end
   end
@@ -596,10 +622,16 @@ defmodule KafkaEx.GenConsumer do
     {:noreply, %{state | consumer_state: new_consumer_state}, 0}
   end
 
-  def terminate(_reason, %State{} = state) do
+  def terminate(reason, %State{} = state) do
+    self() |> IO.inspect(label: "#{__MODULE__}.terminate1 reason:#{inspect reason}, self")
     commit(state)
+    state.worker_name |> IO.inspect(label: "#{__MODULE__}.terminate stopping worker")
     Process.unlink(state.worker_name)
     KafkaEx.stop_worker(state.worker_name)
+  end
+
+  def terminate(reason, state) do
+    self() |> IO.inspect(label: "#{__MODULE__}.terminate2 reason:#{inspect reason}, self")
   end
 
   # Helpers
@@ -612,6 +644,7 @@ defmodule KafkaEx.GenConsumer do
       fetch_options: fetch_options
     } = state
   ) do
+    self() |> IO.inspect(label: "#{__MODULE__}.consume -> fetch start")
     [
       %FetchResponse{
         topic: ^topic,
@@ -624,6 +657,8 @@ defmodule KafkaEx.GenConsumer do
       partition,
       Keyword.merge(fetch_options, [offset: offset])
     )
+
+    self() |> IO.inspect(label: "#{__MODULE__}.consume -> fetch done")
 
     state =
       case error_code do
@@ -744,8 +779,9 @@ defmodule KafkaEx.GenConsumer do
     [%OffsetCommitResponse{topic: ^topic, partitions: [^partition]}] =
       KafkaEx.offset_commit(worker_name, request)
 
+    # Committed offset com.quiqup.tracking_locations/0@4 for tracking_locations
     Logger.debug(fn ->
-      "Committed offset #{topic}/#{partition}@#{offset} for #{group}"
+      "Committed offset #{topic}/#{partition}@#{offset} for #{group}, #{inspect worker_name}"
     end)
 
     %State{

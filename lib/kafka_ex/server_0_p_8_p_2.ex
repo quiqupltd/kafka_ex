@@ -28,9 +28,11 @@ defmodule KafkaEx.Server0P8P2 do
   def start_link(args, name \\ __MODULE__)
 
   def start_link(args, :no_name) do
+    self() |> IO.inspect(label: "#{__MODULE__}.start_link :no_name")
     GenServer.start_link(__MODULE__, [args])
   end
   def start_link(args, name) do
+    self() |> IO.inspect(label: "#{__MODULE__}.start_link")
     GenServer.start_link(__MODULE__, [args, name], [name: name])
   end
 
@@ -39,6 +41,7 @@ defmodule KafkaEx.Server0P8P2 do
   end
 
   def kafka_server_init([args, name]) do
+    raise "kafka_server_init"
     uris = Keyword.get(args, :uris, [])
     metadata_update_interval = Keyword.get(args, :metadata_update_interval, @metadata_update_interval)
     consumer_group_update_interval = Keyword.get(args, :consumer_group_update_interval, @consumer_group_update_interval)
@@ -76,10 +79,13 @@ defmodule KafkaEx.Server0P8P2 do
   end
 
   def kafka_server_fetch(fetch_request, state) do
+    self() |> IO.inspect(label: "#{__MODULE__}.kafka_server_fetch 1")
     true = consumer_group_if_auto_commit?(fetch_request.auto_commit, state)
-    {response, state} = fetch(fetch_request, state)
-
-    {:reply, response, state}
+    self() |> IO.inspect(label: "#{__MODULE__}.kafka_server_fetch 2")
+    case fetch(fetch_request, state) do
+      {:error, error, state} -> {:stop, error, state}
+      {response, state} -> {:reply, response, state}
+    end
   end
 
   def kafka_server_offset_fetch(offset_fetch, state) do
@@ -148,6 +154,7 @@ defmodule KafkaEx.Server0P8P2 do
   end
 
   defp update_consumer_metadata(%State{consumer_group: consumer_group, correlation_id: correlation_id} = state, retry, _error_code) do
+    IO.puts "update_consumer_metadata"
     response = correlation_id
       |> ConsumerMetadata.create_request(@client_id, consumer_group)
       |> first_broker_response(state)

@@ -197,6 +197,7 @@ defmodule KafkaEx.Server do
   end
 
   def call(server, request, timeout) when is_integer(timeout) do
+    timeout |> IO.inspect(label: "#{__MODULE__}.call server:#{inspect(request)}, server:#{inspect server} timeout")
     GenServer.call(server, request, timeout)
   end
 
@@ -218,10 +219,12 @@ defmodule KafkaEx.Server do
       @ssl_options []
 
       def init([args]) do
+        IO.puts "#{__MODULE__}.init args:#{inspect(args)}"
         kafka_server_init([args])
       end
 
       def init([args, name]) do
+        IO.puts "#{__MODULE__}.init args:#{inspect(args)}, name:#{inspect(name)}"
         kafka_server_init([args, name])
       end
 
@@ -298,8 +301,12 @@ defmodule KafkaEx.Server do
         {:noreply, state}
       end
 
-      def terminate(_, state) do
-        Logger.log(:debug, "Shutting down worker #{inspect state.worker_name}")
+      def stop(_) do
+        IO.inspect "#{__MODULE__}.stop !!!!!!!!!!!!!!!"
+      end
+
+      def terminate(reason, state) do
+        Logger.log(:debug, "Shutting down worker #{inspect state.worker_name} due to #{inspect reason}")
         if state.event_pid do
           :gen_event.stop(state.event_pid)
         end
@@ -331,6 +338,7 @@ defmodule KafkaEx.Server do
           broker -> case produce_request.required_acks do
             0 ->  NetworkClient.send_async_request(broker, produce_request_data)
             _ ->
+              IO.puts "#{__MODULE__}.kafka_server_produce send_sync_request"
               response = broker
                 |> NetworkClient.send_sync_request(
                      produce_request_data,
@@ -367,6 +375,7 @@ defmodule KafkaEx.Server do
             Logger.log(:error, "Leader for topic #{topic} is not available")
             {:topic_not_found, state}
           _ ->
+            # IO.puts "#{__MODULE__}.kafka_server_offset send_sync_request"
             response = broker
               |> NetworkClient.send_sync_request(
                    offset_request,
@@ -384,6 +393,7 @@ defmodule KafkaEx.Server do
       end
 
       def kafka_server_metadata(topic, state) do
+        self() |> IO.inspect(label: "#{__MODULE__}.kafka_server_metadata self")
         {correlation_id, metadata} = retrieve_metadata(state.brokers, state.correlation_id, config_sync_timeout(), topic)
         updated_state = %{state | metadata: metadata, correlation_id: correlation_id}
         {:reply, metadata, updated_state}
@@ -394,8 +404,10 @@ defmodule KafkaEx.Server do
       end
 
       def update_metadata(state) do
+        self() |> IO.inspect(label: "#{__MODULE__}.update_metadata self")
         case retrieve_metadata(state.brokers, state.correlation_id, config_sync_timeout()) do
           {:error, reason} ->
+            self() |> IO.inspect(label: "#{__MODULE__}.update_metadata error reason#{inspect(reason)}")
             state
 
           {correlation_id, metadata} ->
@@ -403,6 +415,7 @@ defmodule KafkaEx.Server do
             brokers = state.brokers
               |> remove_stale_brokers(metadata_brokers)
               |> add_new_brokers(metadata_brokers, state.ssl_options, state.use_ssl)
+            brokers |> IO.inspect(label: "#{__MODULE__}.update_metadata brokers")
             %{state | metadata: metadata, brokers: brokers, correlation_id: correlation_id + 1}
         end
       end
@@ -417,6 +430,7 @@ defmodule KafkaEx.Server do
       def retrieve_metadata({:error, message}), do: {:error, message}
       # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
       def retrieve_metadata(brokers, correlation_id, sync_timeout, topic, retry, _error_code) do
+        self() |> IO.inspect(label: "#{__MODULE__}.retrieve_metadata self")
         metadata_request = Metadata.create_request(correlation_id, @client_id, topic)
         data = first_broker_response(metadata_request, brokers, sync_timeout)
         if data do
@@ -441,6 +455,7 @@ defmodule KafkaEx.Server do
       ]
 
       defp kafka_common_init(args, name) do
+        raise "IRV2" # not called
         use_ssl = Keyword.get(args, :use_ssl, false)
         ssl_options = Keyword.get(args, :ssl_options, [])
 
@@ -451,9 +466,13 @@ defmodule KafkaEx.Server do
           @metadata_update_interval
         )
 
+        IO.puts "#{__MODULE__}.kafka_common_init connect_broker"
+
         brokers = for {host, port} <- uris do
           connect_broker(host, port, ssl_options, use_ssl)
         end
+
+        IO.puts "#{__MODULE__}.kafka_common_init retrieve_metadata"
 
         {correlation_id, metadata} = retrieve_metadata(
           brokers,
@@ -571,8 +590,11 @@ defmodule KafkaEx.Server do
       defp first_broker_response(request, brokers, timeout) do
         Enum.find_value(brokers, fn(broker) ->
           if Broker.connected?(broker) do
+            broker |> IO.inspect(label: "#{__MODULE__}.first_broker_response send_sync_request self:#{inspect self()}, broker")
             # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-            case NetworkClient.send_sync_request(broker, request, timeout) do
+            res = NetworkClient.send_sync_request(broker, request, timeout)
+            |> IO.inspect(label: "#{__MODULE__}.first_broker_response send_sync_request res")
+            case res do
               {:error, _} -> nil
               response -> response
             end
@@ -582,6 +604,7 @@ defmodule KafkaEx.Server do
 
       defp config_sync_timeout(timeout \\ nil) do
         timeout || Application.get_env(:kafka_ex, :sync_timeout, @sync_timeout)
+        # |> IO.inspect(join_groupbel: "config_sync_timeout")
       end
     end
   end

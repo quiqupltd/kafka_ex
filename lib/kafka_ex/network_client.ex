@@ -8,10 +8,10 @@ defmodule KafkaEx.NetworkClient do
   def create_socket(host, port, ssl_options \\ [], use_ssl \\ false) do
     case Socket.create(format_host(host), port, build_socket_options(ssl_options), use_ssl) do
       {:ok, socket} ->
-        Logger.log(:debug, "Succesfully connected to broker #{inspect(host)}:#{inspect port}")
+        Logger.log(:debug, "#{__MODULE__}.create_socket Succesfully created socket connection to #{inspect(host)}:#{inspect port}")
         socket
       err           ->
-        Logger.log(:error, "Could not connect to broker #{inspect(host)}:#{inspect port} because of error #{inspect err}")
+        Logger.log(:error, "#{__MODULE__}.create_socket Could not connect to broker #{inspect(host)}:#{inspect port} because of error #{inspect err}")
         nil
     end
   end
@@ -22,6 +22,7 @@ defmodule KafkaEx.NetworkClient do
 
   @spec send_async_request(Broker.t, iodata) :: :ok | {:error, :closed | :inet.posix}
   def send_async_request(broker, data) do
+    broker |> IO.inspect(label: "send_async_request broker")
     socket = broker.socket
     case Socket.send(socket, data) do
       :ok -> :ok
@@ -36,8 +37,10 @@ defmodule KafkaEx.NetworkClient do
     :ok = Socket.setopts(socket, [:binary, {:packet, 4}, {:active, false}])
     response = case Socket.send(socket, data) do
       :ok ->
+        self() |> IO.inspect(label: "#{__MODULE__}.send_sync_request recv start timeout: #{inspect(timeout)}, self")
         case Socket.recv(socket, 0, timeout) do
-          {:ok, data} -> data
+          {:ok, data} ->
+            data
           {:error, reason} ->
             Logger.log(:error, "Receiving data from broker #{inspect broker.host}:#{inspect broker.port} failed with #{inspect reason}")
             {:error, reason}

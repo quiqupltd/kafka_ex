@@ -63,12 +63,17 @@ defmodule KafkaEx do
   {:error, :invalid_consumer_group}
   ```
   """
+  # create_server
   @spec create_worker(atom, KafkaEx.worker_init) :: Supervisor.on_start_child
   def create_worker(name, worker_init \\ []) do
+    self() |> IO.inspect(label: "#{__MODULE__} create_worker name:#{inspect(name)}, self")
+
     case build_worker_options(worker_init) do
       {:ok, worker_init} ->
         KafkaEx.Supervisor.start_child([worker_init, name])
+        |> IO.inspect(label: "#{__MODULE__}.create_worker Supervisor.start_child res")
       {:error, error} ->
+        IO.puts "#{__MODULE__}.create_worker error"
         {:error, error}
     end
   end
@@ -81,6 +86,8 @@ defmodule KafkaEx do
   @spec stop_worker(atom | pid) :: :ok |
     {:error, :not_found} | {:error, :simple_one_for_one}
   def stop_worker(worker) do
+    worker |> IO.inspect(label: "#{__MODULE__}.stop_worker")
+    # IRV ensure call this if problems
     KafkaEx.Supervisor.stop_child(worker)
   end
 
@@ -101,6 +108,7 @@ defmodule KafkaEx do
   def join_group(request, opts \\ []) do
     worker_name = Keyword.get(opts, :worker_name, Config.default_worker)
     timeout = Keyword.get(opts, :timeout)
+    # |> IO.inspect(label: "timeout")
     Server.call(worker_name, {:join_group, request, timeout}, opts)
   end
 
@@ -243,6 +251,8 @@ defmodule KafkaEx do
     min_bytes         = Keyword.get(opts, :min_bytes, @min_bytes)
     max_bytes         = Keyword.get(opts, :max_bytes, @max_bytes)
     auto_commit       = Keyword.get(opts, :auto_commit, true)
+
+    IO.puts "#{__MODULE__}.fetch worker_name:#{inspect worker_name}"
 
     retrieved_offset = current_offset(supplied_offset, partition, topic, worker_name)
 
@@ -545,13 +555,17 @@ defmodule KafkaEx do
   def valid_consumer_group?(b) when is_binary(b), do: byte_size(b) > 0
   def valid_consumer_group?(_), do: false
 
-#OTP API
+  # OTP API
   def start(_type, _args) do
     max_restarts = Application.get_env(:kafka_ex, :max_restarts, 10)
     max_seconds = Application.get_env(:kafka_ex, :max_seconds, 60)
-    {:ok, pid}     = KafkaEx.Supervisor.start_link(Config.server_impl, max_restarts, max_seconds)
+    IO.puts "000 #{__MODULE__}.start " <> inspect(max_restarts)
+    # max_restarts = 100
+    # max_seconds = 1
+    {:ok, pid} = KafkaEx.Supervisor.start_link(Config.server_impl, max_restarts, max_seconds)
 
     if Config.disable_default_worker do
+      self() |> IO.inspect(label: "003 #{__MODULE__}.start (no worker)")
       {:ok, pid}
     else
       case KafkaEx.create_worker(Config.default_worker, []) do

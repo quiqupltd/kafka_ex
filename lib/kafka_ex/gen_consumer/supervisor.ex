@@ -39,9 +39,11 @@ defmodule KafkaEx.GenConsumer.Supervisor do
     KafkaEx.GenConsumer.options
   ) :: Elixir.Supervisor.on_start
   def start_link(consumer_module, group_name, assignments, opts \\ []) do
+    self() |> IO.inspect(label: "#{__MODULE__}.start_link")
     start_link_result = Elixir.Supervisor.start_link(
       __MODULE__,
-      {consumer_module, group_name, assignments, opts}
+      {consumer_module, group_name, assignments, opts},
+      [max_restarts: 100, max_seconds: 1]
     )
     case start_link_result do
       {:ok, pid} ->
@@ -76,6 +78,8 @@ defmodule KafkaEx.GenConsumer.Supervisor do
   end
 
   def init({consumer_module, group_name, _assignments, _opts}) do
+    self() |> IO.inspect(label: "#{__MODULE__}.init group_name:#{inspect(group_name)}, self")
+
     children = [
       worker(KafkaEx.GenConsumer, [consumer_module, group_name])
     ]
@@ -84,7 +88,9 @@ defmodule KafkaEx.GenConsumer.Supervisor do
   end
 
   defp start_workers(pid, assignments, opts) do
+    self() |> IO.inspect(label: "#{__MODULE__} start_workers")
     Enum.each(assignments, fn ({topic, partition}) ->
+      IO.puts("#{__MODULE__} starting...")
       case Elixir.Supervisor.start_child(pid, [topic, partition, opts]) do
         {:ok, _child} -> nil
         {:ok, _child, _info} -> nil
@@ -92,5 +98,13 @@ defmodule KafkaEx.GenConsumer.Supervisor do
     end)
 
     :ok
+  end
+
+  def stop(_) do
+    IO.inspect "#{__MODULE__}.stop !!!!!!!!!!!!!!!"
+  end
+
+  def terminate(_, _) do
+    IO.inspect "#{__MODULE__}.terminate !!!!!!!!!!!!!!!"
   end
 end

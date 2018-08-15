@@ -23,9 +23,14 @@ defmodule KafkaEx.Server0P9P0 do
   def start_link(args, name \\ __MODULE__)
 
   def start_link(args, :no_name) do
+    self() |> IO.inspect(label: "#{__MODULE__}.start_link :no_name")
     GenServer.start_link(__MODULE__, [args])
   end
+
   def start_link(args, name) do
+    # Process.info(self(), :current_stacktrace)
+    # |> IO.inspect(label: "CALLSTACK")
+    self() |> IO.inspect(label: "#{__MODULE__}.start_link name:#{inspect name}, self")
     GenServer.start_link(__MODULE__, [args, name], [name: name])
   end
 
@@ -44,6 +49,8 @@ defmodule KafkaEx.Server0P9P0 do
   end
 
   def kafka_server_init([args, name]) do
+    self() |> IO.inspect(label: "#{__MODULE__}.kafka_server_init self")
+
     uris = Keyword.get(args, :uris, [])
     metadata_update_interval = Keyword.get(args, :metadata_update_interval, @metadata_update_interval)
     consumer_group_update_interval = Keyword.get(args, :consumer_group_update_interval, @consumer_group_update_interval)
@@ -78,8 +85,11 @@ defmodule KafkaEx.Server0P9P0 do
   end
 
   def kafka_server_connect(%State{brokers: brokers} = state) do
+    IO.puts("#{__MODULE__}.kafka_server_connect -> retrieve_metadata")
     case retrieve_metadata(brokers, 0, config_sync_timeout()) do
-      {:error, _reason} ->
+      {:error, reason} ->
+        self() |> IO.inspect(label: "#{__MODULE__}.kafka_server_init retrieve_metadata :error reason:#{inspect reason}")
+
         # this is supervised by the main OTP app, so if this returns stop too many times
         # it will stop the app!
         # {:stop, reason}
@@ -90,6 +100,7 @@ defmodule KafkaEx.Server0P9P0 do
         {:noreply, state}
 
       {correlation_id, metadata} ->
+        IO.puts "#{__MODULE__}.kafka_server_connect retrieve_metadata ok"
         state = %State{state | metadata: metadata, correlation_id: correlation_id}
         # Get the initial "real" broker list and start a regular refresh cycle.
         state = update_metadata(state)
@@ -100,14 +111,23 @@ defmodule KafkaEx.Server0P9P0 do
           {_, updated_state} = update_consumer_metadata(state)
           {:ok, _} = :timer.send_interval(state.consumer_group_update_interval, :update_consumer_metadata)
 
+          # {:ok, updated_state}
           {:noreply, %{updated_state | ready: true}}
         else
+          # {:ok, state}
           {:noreply, state}
         end
     end
   end
 
+  # def kafka_server_ready_check(%State{brokers: brokers} = state) do
+  #   value
+  #   {:reply, value, state}
+  # end
+
   def kafka_server_join_group(request, network_timeout, state_in) do
+    state_in.brokers |> IO.inspect(label: "#{__MODULE__}.kafka_server_join_group brokers")
+
     {response, state_out} = consumer_group_sync_request(
       request,
       JoinGroup,
@@ -119,6 +139,8 @@ defmodule KafkaEx.Server0P9P0 do
   end
 
   def kafka_server_sync_group(request, network_timeout, state_in) do
+    state_in.brokers |> IO.inspect(label: "#{__MODULE__}.kafka_server_sync_group brokers")
+
     {response, state_out} = consumer_group_sync_request(
       request,
       SyncGroup,
@@ -130,6 +152,7 @@ defmodule KafkaEx.Server0P9P0 do
   end
 
   def kafka_server_leave_group(request, network_timeout, state_in) do
+    state_in.brokers |> IO.inspect(label: "#{__MODULE__}.kafka_server_leave_group brokers")
     {response, state_out} = consumer_group_sync_request(
       request,
       LeaveGroup,
@@ -141,12 +164,15 @@ defmodule KafkaEx.Server0P9P0 do
   end
 
   def kafka_server_heartbeat(request, network_timeout, state_in) do
+    IO.puts("#{__MODULE__}.kafka_server_heartbeat")
     {response, state_out} = consumer_group_sync_request(
       request,
       Heartbeat,
       network_timeout,
       state_in
     )
+
+    response |> IO.inspect(label: "#{__MODULE__}.kafka_server_heartbeat response")
 
     {:reply, response, state_out}
   end
@@ -157,6 +183,7 @@ defmodule KafkaEx.Server0P9P0 do
     network_timeout,
     state
   ) do
+    IO.puts "#{__MODULE__}.consumer_group_sync_request"
     unless consumer_group?(state) do
       raise ConsumerGroupRequiredError, request
     end
@@ -172,14 +199,18 @@ defmodule KafkaEx.Server0P9P0 do
       @client_id,
       request
     )
+   broker |> IO.inspect(label: "#{__MODULE__}.consumer_group_sync_request calling send_sync_request broker")
     wire_response = NetworkClient.send_sync_request(
       broker,
       wire_request,
       sync_timeout
     )
+    |> IO.inspect(label: "#{__MODULE__}.consumer_group_sync_request send_sync_request res")
 
     case wire_response do
-      {:error, reason} -> {{:error, reason}, state_out}
+      {:error, reason} ->
+        reason |> IO.inspect(label: "#{__MODULE__}.consumer_group_sync_request send_sync_request error")
+        {{:error, reason}, state_out}
       _ ->
         response = protocol_module.parse_response(wire_response)
 
@@ -205,6 +236,7 @@ defmodule KafkaEx.Server0P9P0 do
   end
 
   defp update_consumer_metadata(%State{consumer_group: consumer_group, correlation_id: correlation_id} = state, retry, _error_code) do
+    IO.puts "#{__MODULE__}.update_consumer_metadata"
     response = correlation_id
       |> ConsumerMetadata.create_request(@client_id, consumer_group)
       |> first_broker_response(state)
@@ -239,10 +271,15 @@ defmodule KafkaEx.Server0P9P0 do
   defp broker_for_consumer_group_with_update(state, use_first_as_default \\ false) do
     case broker_for_consumer_group(state) do
       nil ->
+        IO.puts("#{__MODULE__}.broker_for_consumer_group_with_update 1")
         {_, updated_state} = update_consumer_metadata(state)
+        IO.puts("#{__MODULE__}.broker_for_consumer_group_with_update 2")
         default_broker = if use_first_as_default, do: hd(state.brokers), else: nil
+        state.brokers |> IO.inspect(label: "#{__MODULE__}.broker_for_consumer_group_with_update brokers")
         {broker_for_consumer_group(updated_state) || default_broker, updated_state}
+        |> IO.inspect(label: "#{__MODULE__}.broker_for_consumer_group_with_update ret")
       broker ->
+        broker |> IO.inspect(label: "#{__MODULE__}.broker_for_consumer_group_with_update broker")
         {broker, state}
     end
   end

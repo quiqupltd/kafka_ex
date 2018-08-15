@@ -32,6 +32,7 @@ defmodule KafkaEx.Protocol.Heartbeat do
 
   @spec parse_response(binary) :: Response.t
   def parse_response(<< _correlation_id :: 32-signed, error_code :: 16-signed >>) do
+    # IO.puts "parse_response"
     %Response{error_code: KafkaEx.Protocol.error(error_code)}
   end
 end

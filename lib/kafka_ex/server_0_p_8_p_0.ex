@@ -1,5 +1,6 @@
 defmodule KafkaEx.Server0P8P0 do
   @moduledoc """
+  IRV: not used
   Implements kafkaEx.Server behaviors for kafka >= 0.8.0 < 0.8.2 API.
   """
 
@@ -44,10 +45,12 @@ defmodule KafkaEx.Server0P8P0 do
   def start_link(args, name \\ __MODULE__)
 
   def start_link(args, :no_name) do
+    self() |> IO.inspect(label: "#{__MODULE__}.start_link :no_name")
     GenServer.start_link(__MODULE__, [args])
   end
 
   def start_link(args, name) do
+    self() |> IO.inspect(label: "#{__MODULE__}.start_link")
     GenServer.start_link(__MODULE__, [args, name], [name: name])
   end
 
@@ -68,6 +71,7 @@ defmodule KafkaEx.Server0P8P0 do
   def kafka_server_update_consumer_metadata(_state), do: raise "Consumer Group Metadata is not supported in 0.8.0 version of kafka"
 
   defp fetch(request, state) do
+    raise "IRV"
     case network_request(request, Fetch, state) do
       {{:error, error}, state_out} -> {error, state_out}
       {response, state_out} -> {response, state_out}

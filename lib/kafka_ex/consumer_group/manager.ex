@@ -41,7 +41,7 @@ defmodule KafkaEx.ConsumerGroup.Manager do
   end
 
   @heartbeat_interval 5_000
-  @session_timeout 30_000
+  @session_timeout 35_000
   @session_timeout_padding 5_000
   @startup_delay 100
 
@@ -54,6 +54,8 @@ defmodule KafkaEx.ConsumerGroup.Manager do
   @spec start_link(module, binary, [binary], KafkaEx.GenConsumer.options) ::
     GenServer.on_start
   def start_link(consumer_module, group_name, topics, opts \\ []) do
+    self() |> IO.inspect(label: "040 #{__MODULE__}.start_link consumer_module:#{inspect consumer_module}, self")
+
     gen_server_opts = Keyword.get(opts, :gen_server_opts, [])
     consumer_opts = Keyword.drop(opts, [:gen_server_opts])
 
@@ -61,12 +63,16 @@ defmodule KafkaEx.ConsumerGroup.Manager do
       __MODULE__,
       {consumer_module, group_name, topics, consumer_opts},
       gen_server_opts
+      # name: __MODULE__
     )
+    |> IO.inspect(label: "050 #{__MODULE__}.start_link res")
   end
 
   # GenServer callbacks
 
   def init({consumer_module, group_name, topics, opts}) do
+    self() |> IO.inspect(label: "041 #{__MODULE__}.init")
+
     heartbeat_interval = Keyword.get(
       opts,
       :heartbeat_interval,
@@ -108,6 +114,7 @@ defmodule KafkaEx.ConsumerGroup.Manager do
       worker_opts: worker_opts
     }
 
+    IO.puts "042 #{__MODULE__}.init sending init_start_worker"
     Process.send_after(self(), :init_start_worker, @startup_delay)
 
     {:ok, state}
@@ -151,14 +158,18 @@ defmodule KafkaEx.ConsumerGroup.Manager do
     :init_start_worker, %State{group_name: group_name, worker_opts: worker_opts} = state
   ) do
     Logger.debug(fn -> "Phase 1/4 - broker connection" end)
+    IO.ANSI.Docs.print_heading("Phase 1/4")
+    self() |> IO.inspect(label: "#{__MODULE__}.handle_info :init_start_worker")
 
     res = KafkaEx.create_worker(
+      # KafkaEx.ConsumerGroup.Manager, # process name instead of pid
       :no_name,
       [consumer_group: group_name] ++ worker_opts
     )
 
     case res do
       {:ok, worker_name} ->
+        worker_name |> IO.inspect(label: "#{__MODULE__}.handle_info :init_start_worker success")
         state = %State{state | worker_name: worker_name}
 
         Process.flag(:trap_exit, true)
@@ -171,14 +182,22 @@ defmodule KafkaEx.ConsumerGroup.Manager do
 
         {:noreply, state}
 
-      {:error, {:already_started, _pid}} ->
+      {:error, {:already_started, pid}} ->
+        self() |> IO.inspect(label: "#{__MODULE__}.handle_info :init_start_worker error already_started pid:#{inspect(pid)}, self")
+
         Process.flag(:trap_exit, true)
+
+        # Move onto second stage of init, which can fail seperatly from this
+        # connection, see below for more details
+        # Process.send_after(self(), :init_join_group, @startup_delay)
 
         Process.send_after(self(), :init_wait_for_server, @startup_delay)
 
         {:noreply, state}
 
-      {:error, _reason} ->
+      {:error, reason} ->
+        self() |> IO.inspect(label: "#{__MODULE__}.handle_info :init_start_worker error reason:#{inspect reason}")
+
         # We dont need to stop_worker here, as it exists itself
         #   12:54:00.356 [error] CRASH REPORT Process <0.745.0> with 0 neighbours exited with reason:
         # As the call to KafkaEx.create_worker/2 starts a Server* as a child process via Supervisor.start_child
@@ -193,6 +212,8 @@ defmodule KafkaEx.ConsumerGroup.Manager do
   # phase 2/4
   def handle_info(:init_wait_for_server, %State{worker_name: worker_name} = state) do
     Logger.debug(fn -> "Phase 2/4 - broker connection" end)
+    IO.ANSI.Docs.print_heading("Phase 3/4")
+
     if KafkaEx.ready?(worker_name) do
       Process.send_after(self(), :init_join_group, @startup_delay)
     else
@@ -206,17 +227,22 @@ defmodule KafkaEx.ConsumerGroup.Manager do
   # If `member_id` and `generation_id` aren't set, we haven't yet joined the
   # group. `member_id` and `generation_id` are initialized by
   # `JoinGroupResponse`.
+  # `join/1`
   def handle_info(
     :init_join_group, %State{generation_id: nil, member_id: nil} = state
   ) do
     Logger.debug(fn -> "Phase 3/4 - partition assignments" end)
+    IO.ANSI.Docs.print_heading("Phase 2/4")
+    self() |> IO.inspect(label: "#{__MODULE__}.handle_info :init_join_group")
     case join(state) do
       {:ok, new_state} ->
+        new_state |> IO.inspect(label: "#{__MODULE__}.handle_info join new_state")
         # move onto next stage, if `join/1` has set `assignments` then we are done
         Process.send_after(self(), :init_assign_partitions, @startup_delay)
         {:noreply, new_state}
 
-      {:error, _reason} ->
+      {:error, reason} ->
+        reason |> IO.inspect(label: "#{__MODULE__}.handle_info join error reason")
         # retry join
         Process.send_after(self(), :init_join_group, @startup_delay)
         {:noreply, state}
@@ -224,51 +250,85 @@ defmodule KafkaEx.ConsumerGroup.Manager do
   end
 
   def handle_info(:init_join_group, %State{} = state) do
+    state |> IO.inspect(label: "#{__MODULE__}.handle_info :init_join_group catch error")
     {:noreply, state}
   end
 
-  # `init_assign_partitions` - phase 4/4
+  # `init_assign_partitions` - phase 3/3
   # If `assignments` is nil, it means we've not done partitions assignment
   # Leader is responsible for assigning partitions to all group members.
   def handle_info(
     :init_assign_partitions, %State{assignments: nil, members: members} = state
   ) when not is_nil(members) do
     Logger.debug(fn -> "Phase 4/4 - partition assignments" end)
-    case assignable_partitions(state) do
+    IO.ANSI.Docs.print_heading("Phase 3/3")
+    self() |> IO.inspect(label: "#{__MODULE__}.handle_info :init_assign_partitions assignments")
+
+    res = assignable_partitions(state)
+    |> IO.inspect(label: "#{__MODULE__}.handle_info :init_assign_partitions assignable_partitions res")
+
+    case res do
       [] ->
+        IO.puts "#{__MODULE__}.handle_info :init_assign_partitions sending init_assign_partitions"
         Process.send_after(self(), :init_assign_partitions, @startup_delay)
         {:noreply, state}
 
       partitions ->
+        partitions |> IO.inspect(label: "#{__MODULE__}.handle_info :init_assign_partitions partitions")
         assignments = assign_partitions(state, members, partitions)
         {:ok, new_state} = sync(state, assignments)
         Logger.debug(fn -> "Connection complete" end)
+        IO.puts "#{__MODULE__}.handle_info :init_assign_partitions complete"
+        IO.ANSI.Docs.print_heading("COMPLETE")
         {:noreply, new_state}
     end
   end
 
   def handle_info(:init_assign_partitions, %State{assignments: []} = state) do
+    state |> IO.inspect(label: "#{__MODULE__}.handle_info :init_assignments none")
     {:noreply, state}
   end
 
   def handle_info(:init_assign_partitions, %State{} = state) do
+    state |> IO.inspect(label: "#{__MODULE__}.handle_info :init_assignments catch error")
     {:noreply, state}
   end
 
   # If the heartbeat gets an error, we need to rebalance.
+  # {:stop, {:shutdown, :rebalance}, state}
   def handle_info({:EXIT, heartbeat_timer, {:shutdown, :rebalance}}, %State{heartbeat_timer: heartbeat_timer} = state) do
+    self() |> IO.inspect(label: "#{__MODULE__}.handle_info1 EXIT from heartbeat_timer:#{inspect heartbeat_timer}, self")
     {:ok, state} = rebalance(state)
     {:noreply, state}
+  end
+
+  # [{:EXIT, #PID<0.813.0>, {:shutdown, {:error, :timeout}}},
+  def handle_info({:EXIT, pid, {:shutdown, {:error, error_code}}}, %State{} = state) do
+    self() |> IO.inspect(label: "#{__MODULE__}.handle_info2 EXIT from pid:#{inspect pid}, error_code:#{inspect error_code}, self")
+    # {:stop, error_code, state}
+    {:stop, :normal, state}
   end
 
   # When terminating, inform the group coordinator that this member is leaving
   # the group so that the group can rebalance without waiting for a session
   # timeout.
-  def terminate(_reason, %State{generation_id: nil, member_id: nil}), do: :ok
-  def terminate(_reason, %State{} = state) do
+  def terminate(reason, %State{generation_id: nil, member_id: nil}) do
+    self() |> IO.inspect(label: "#{__MODULE__}.terminate1, reason:#{inspect reason}, self")
+    :ok
+  end
+
+  def terminate(reason, %State{} = state) do
+    self() |> IO.inspect(label: "#{__MODULE__}.terminate2, reason:#{inspect reason}, self")
+
+    stop_consumer(state)
     {:ok, _state} = leave(state)
     Process.unlink(state.worker_name)
     KafkaEx.stop_worker(state.worker_name)
+    :ok
+  end
+
+  def stop(_) do
+    self() |> IO.inspect(label: "#{__MODULE__}.stop !!!")
   end
 
   ### Helpers
@@ -296,12 +356,17 @@ defmodule KafkaEx.ConsumerGroup.Manager do
       member_id: member_id
     } = state
   ) do
+    self() |> IO.inspect(label: "#{__MODULE__}.join")
     join_request = %JoinGroupRequest{
       group_name: group_name,
       member_id: member_id || "",
       topics: topics,
       session_timeout: session_timeout,
     }
+
+    # @session_timeout 35_000
+    # @session_timeout_padding 5_000
+    Logger.debug("Joining can take a while")
 
     join_response = KafkaEx.join_group(
       join_request,
@@ -310,8 +375,11 @@ defmodule KafkaEx.ConsumerGroup.Manager do
     )
 
     if join_response.error_code != :no_error do
+      # self() |> IO.inspect(label: "#{__MODULE__}.join join_response:#{inspect join_response}")
+      # TODO: Dont raise but let timeout retry
       message = "Error joining consumer group #{group_name}: " <> "#{inspect join_response.error_code}"
       Logger.error(message)
+      # raise message
       {:error, join_response.error_code}
     else
       Logger.debug(fn -> "Joined consumer group #{group_name}" end)
@@ -326,6 +394,7 @@ defmodule KafkaEx.ConsumerGroup.Manager do
 
       if JoinGroupResponse.leader?(join_response) do
         # Leader is responsible for assigning partitions to all group members.
+        # Process.send_after(self(), :init_assign_partitions, 1000)
 
         {:ok, new_state}
       else
@@ -395,6 +464,7 @@ defmodule KafkaEx.ConsumerGroup.Manager do
       member_id: member_id
     } = state
   ) do
+    self() |> IO.inspect(label: "#{__MODULE__}.leave self")
     stop_heartbeat_timer(state)
 
     leave_request = %LeaveGroupRequest{
@@ -477,6 +547,7 @@ defmodule KafkaEx.ConsumerGroup.Manager do
     } = state,
     assignments
   ) do
+    self() |> IO.inspect(label: "#{__MODULE__}.start_consumer")
     {:ok, consumer_supervisor_pid} = ConsumerGroup.start_consumer(
       pid,
       consumer_module,
@@ -510,8 +581,10 @@ defmodule KafkaEx.ConsumerGroup.Manager do
     %State{worker_name: worker_name, topics: topics, group_name: group_name}
   ) do
     metadata = KafkaEx.metadata(worker_name: worker_name)
+    self() |> IO.inspect(label: "#{__MODULE__}.assignable_partitions self")
 
     Enum.flat_map(topics, fn (topic) ->
+      self() |> IO.inspect(label: "#{__MODULE__}.assignable_partitions topic:#{inspect topic}, self")
       partitions = MetadataResponse.partitions_for_topic(metadata, topic)
 
       warn_if_no_partitions(partitions, group_name, topic)
