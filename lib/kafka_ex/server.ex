@@ -75,6 +75,10 @@ defmodule KafkaEx.Server do
     {:ok, state, timeout | :hibernate} |
     :ignore |
     {:stop, reason :: any} when state: any
+  @callback kafka_server_connect(state :: State.t) ::
+    {:noreply, new_state} |
+    {:noreply, new_state, timeout | :hibernate} |
+    {:stop, reason :: term, new_state} when new_state: term
   @callback kafka_server_ready_check(state :: State.t) ::
     {:reply, reply, new_state} |
     {:reply, reply, new_state, timeout | :hibernate} |
@@ -221,8 +225,16 @@ defmodule KafkaEx.Server do
         kafka_server_init([args, name])
       end
 
+      def handle_info(:init_server_connect, state) do
+        kafka_server_connect(state)
+      end
+
       def handle_call(:ready_check, _from, %State{ready: ready} = state) do
-        # kafka_server_ready_check(state)
+        kafka_server_ready_check(state)
+        {:reply, ready, state}
+      end
+
+      def kafka_server_ready_check(%State{ready: ready} = state) do
         {:reply, ready, state}
       end
 
@@ -382,12 +394,17 @@ defmodule KafkaEx.Server do
       end
 
       def update_metadata(state) do
-        {correlation_id, metadata} = retrieve_metadata(state.brokers, state.correlation_id, config_sync_timeout())
-        metadata_brokers = metadata.brokers
-        brokers = state.brokers
-          |> remove_stale_brokers(metadata_brokers)
-          |> add_new_brokers(metadata_brokers, state.ssl_options, state.use_ssl)
-        %{state | metadata: metadata, brokers: brokers, correlation_id: correlation_id + 1}
+        case retrieve_metadata(state.brokers, state.correlation_id, config_sync_timeout()) do
+          {:error, reason} ->
+            state
+
+          {correlation_id, metadata} ->
+            metadata_brokers = metadata.brokers
+            brokers = state.brokers
+              |> remove_stale_brokers(metadata_brokers)
+              |> add_new_brokers(metadata_brokers, state.ssl_options, state.use_ssl)
+            %{state | metadata: metadata, brokers: brokers, correlation_id: correlation_id + 1}
+        end
       end
 
       # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
@@ -397,6 +414,7 @@ defmodule KafkaEx.Server do
         Logger.log(:error, "Metadata request for topic #{inspect topic} failed with error_code #{inspect error_code}")
         {correlation_id, %Metadata.Response{}}
       end
+      def retrieve_metadata({:error, message}), do: {:error, message}
       # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
       def retrieve_metadata(brokers, correlation_id, sync_timeout, topic, retry, _error_code) do
         metadata_request = Metadata.create_request(correlation_id, @client_id, topic)
@@ -411,10 +429,9 @@ defmodule KafkaEx.Server do
               retrieve_metadata(brokers, correlation_id + 1, sync_timeout, topic, retry - 1, topic_metadata.error_code)
           end
         else
-          message = "Unable to fetch metadata from any brokers. Timeout is #{sync_timeout}."
+          message = "#{__MODULE__}.retrieve_metadata Unable to fetch metadata from any brokers. Timeout is #{sync_timeout}."
           Logger.log(:error, message)
-          raise message
-          :no_metadata_available
+          {:error, message}
         end
       end
 

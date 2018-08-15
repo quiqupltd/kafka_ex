@@ -58,24 +58,53 @@ defmodule KafkaEx.Server0P9P0 do
     use_ssl = Keyword.get(args, :use_ssl, false)
     ssl_options = Keyword.get(args, :ssl_options, [])
 
-    brokers = Enum.map(uris, fn({host, port}) -> %Broker{host: host, port: port, socket: NetworkClient.create_socket(host, port, ssl_options, use_ssl)} end)
-    {correlation_id, metadata} = retrieve_metadata(brokers, 0, config_sync_timeout())
-    state = %State{metadata: metadata, brokers: brokers, correlation_id: correlation_id, consumer_group: consumer_group, metadata_update_interval: metadata_update_interval, consumer_group_update_interval: consumer_group_update_interval, worker_name: name, ssl_options: ssl_options, use_ssl: use_ssl}
-    # Get the initial "real" broker list and start a regular refresh cycle.
-    state = update_metadata(state)
-    {:ok, _} = :timer.send_interval(state.metadata_update_interval, :update_metadata)
+    brokers = Enum.map(uris,
+      fn({host, port}) -> %Broker{host: host, port: port, socket: NetworkClient.create_socket(host, port, ssl_options, use_ssl)} end
+    )
 
-    state =
-      if consumer_group?(state) do
-        # If we are using consumer groups then initialize the state and start the update cycle
-        {_, updated_state} = update_consumer_metadata(state)
-        {:ok, _} = :timer.send_interval(state.consumer_group_update_interval, :update_consumer_metadata)
-        updated_state
-      else
-        state
-      end
+    state = %State{
+      brokers: brokers,
+      consumer_group: consumer_group,
+      metadata_update_interval: metadata_update_interval,
+      consumer_group_update_interval: consumer_group_update_interval,
+      worker_name: name,
+      ssl_options: ssl_options,
+      use_ssl: use_ssl
+    }
+
+    Process.send_after(self(), :init_server_connect, 1000)
 
     {:ok, state}
+  end
+
+  def kafka_server_connect(%State{brokers: brokers} = state) do
+    case retrieve_metadata(brokers, 0, config_sync_timeout()) do
+      {:error, _reason} ->
+        # this is supervised by the main OTP app, so if this returns stop too many times
+        # it will stop the app!
+        # {:stop, reason}
+
+        # :ignore # returns `{:ok, ?}` which means start_worker cannot pattern match!
+
+        Process.send_after(self(), :init_server_connect, 1000)
+        {:noreply, state}
+
+      {correlation_id, metadata} ->
+        state = %State{state | metadata: metadata, correlation_id: correlation_id}
+        # Get the initial "real" broker list and start a regular refresh cycle.
+        state = update_metadata(state)
+        {:ok, _} = :timer.send_interval(state.metadata_update_interval, :update_metadata)
+
+        if consumer_group?(state) do
+          # If we are using consumer groups then initialize the state and start the update cycle
+          {_, updated_state} = update_consumer_metadata(state)
+          {:ok, _} = :timer.send_interval(state.consumer_group_update_interval, :update_consumer_metadata)
+
+          {:noreply, %{updated_state | ready: true}}
+        else
+          {:noreply, state}
+        end
+    end
   end
 
   def kafka_server_join_group(request, network_timeout, state_in) do
@@ -132,7 +161,7 @@ defmodule KafkaEx.Server0P9P0 do
       raise ConsumerGroupRequiredError, request
     end
 
-    {broker, state} = broker_for_consumer_group_with_update(state)
+    {broker, state} = broker_for_consumer_group_with_update(state, true)
 
     state_out = %{state | correlation_id: state.correlation_id + 1}
 

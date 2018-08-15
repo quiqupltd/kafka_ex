@@ -163,7 +163,7 @@ defmodule KafkaEx.Server0P8P2 do
   defp fetch(request, state) do
     true = consumer_group_if_auto_commit?(request.auto_commit, state)
     case network_request(request, Fetch, state) do
-      {{:error, error}, state_out} -> {error, state_out}
+      {{:error, error}, state_out} -> {:error, error, state_out}
       {response, state_out} ->
         last_offset = response |> hd |> Map.get(:partitions) |> hd |> Map.get(:last_offset)
         if last_offset != nil && request.auto_commit do

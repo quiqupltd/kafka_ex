@@ -35,6 +35,7 @@ defmodule KafkaEx.ConsumerGroup.Manager do
       :generation_id,
       :assignments,
       :heartbeat_timer,
+      :worker_opts,
     ]
     @type t :: %__MODULE__{}
   end
@@ -42,6 +43,7 @@ defmodule KafkaEx.ConsumerGroup.Manager do
   @heartbeat_interval 5_000
   @session_timeout 30_000
   @session_timeout_padding 5_000
+  @startup_delay 100
 
   @type assignments :: [{binary(), integer()}]
 
@@ -93,14 +95,9 @@ defmodule KafkaEx.ConsumerGroup.Manager do
     )
 
     worker_opts = Keyword.take(opts, [:uris])
-    {:ok, worker_name} = KafkaEx.create_worker(
-      :no_name,
-      [consumer_group: group_name] ++ worker_opts
-    )
 
     state = %State{
       supervisor_pid: supervisor_pid,
-      worker_name: worker_name,
       heartbeat_interval: heartbeat_interval,
       session_timeout: session_timeout,
       consumer_module: consumer_module,
@@ -108,12 +105,12 @@ defmodule KafkaEx.ConsumerGroup.Manager do
       consumer_opts: consumer_opts,
       group_name: group_name,
       topics: topics,
-      member_id: nil,
+      worker_opts: worker_opts
     }
 
-    Process.flag(:trap_exit, true)
+    Process.send_after(self(), :init_start_worker, @startup_delay)
 
-    {:ok, state, 0}
+    {:ok, state}
   end
 
   ######################################################################
@@ -147,15 +144,115 @@ defmodule KafkaEx.ConsumerGroup.Manager do
   end
   ######################################################################
 
+  # `init_start_worker` - stage 1/4 of connecting, during the `init/1`
+  # callback, it fires a message to do this, which means if this fails, it can be re-tried by
+  # sending the same message
+  def handle_info(
+    :init_start_worker, %State{group_name: group_name, worker_opts: worker_opts} = state
+  ) do
+    Logger.debug(fn -> "Phase 1/4 - broker connection" end)
+
+    res = KafkaEx.create_worker(
+      :no_name,
+      [consumer_group: group_name] ++ worker_opts
+    )
+
+    case res do
+      {:ok, worker_name} ->
+        state = %State{state | worker_name: worker_name}
+
+        Process.flag(:trap_exit, true)
+
+        # Move onto second stage of init, which can fail separately from this
+        # connection, see below for more details
+        # Process.send_after(self(), :init_join_group, @startup_delay)
+
+        Process.send_after(self(), :init_wait_for_server, @startup_delay)
+
+        {:noreply, state}
+
+      {:error, {:already_started, _pid}} ->
+        Process.flag(:trap_exit, true)
+
+        Process.send_after(self(), :init_wait_for_server, @startup_delay)
+
+        {:noreply, state}
+
+      {:error, _reason} ->
+        # We dont need to stop_worker here, as it exists itself
+        #   12:54:00.356 [error] CRASH REPORT Process <0.745.0> with 0 neighbours exited with reason:
+        # As the call to KafkaEx.create_worker/2 starts a Server* as a child process via Supervisor.start_child
+        # but if it fails within the init/1, it returns {:stop, reason} which exits that process for us
+
+        # Re-attempt this stage
+        Process.send_after(self(), :init_start_worker, @startup_delay)
+        {:noreply, state}
+    end
+  end
+
+  # phase 2/4
+  def handle_info(:init_wait_for_server, %State{worker_name: worker_name} = state) do
+    Logger.debug(fn -> "Phase 2/4 - broker connection" end)
+    if KafkaEx.ready?(worker_name) do
+      Process.send_after(self(), :init_join_group, @startup_delay)
+    else
+      Process.send_after(self(), :init_wait_for_server, @startup_delay)
+    end
+
+     {:noreply, state}
+  end
+
+  # `init_join_group` - phase 3/4
   # If `member_id` and `generation_id` aren't set, we haven't yet joined the
   # group. `member_id` and `generation_id` are initialized by
   # `JoinGroupResponse`.
   def handle_info(
-    :timeout, %State{generation_id: nil, member_id: nil} = state
+    :init_join_group, %State{generation_id: nil, member_id: nil} = state
   ) do
-    {:ok, new_state} = join(state)
+    Logger.debug(fn -> "Phase 3/4 - partition assignments" end)
+    case join(state) do
+      {:ok, new_state} ->
+        # move onto next stage, if `join/1` has set `assignments` then we are done
+        Process.send_after(self(), :init_assign_partitions, @startup_delay)
+        {:noreply, new_state}
 
-    {:noreply, new_state}
+      {:error, _reason} ->
+        # retry join
+        Process.send_after(self(), :init_join_group, @startup_delay)
+        {:noreply, state}
+    end
+  end
+
+  def handle_info(:init_join_group, %State{} = state) do
+    {:noreply, state}
+  end
+
+  # `init_assign_partitions` - phase 4/4
+  # If `assignments` is nil, it means we've not done partitions assignment
+  # Leader is responsible for assigning partitions to all group members.
+  def handle_info(
+    :init_assign_partitions, %State{assignments: nil, members: members} = state
+  ) when not is_nil(members) do
+    Logger.debug(fn -> "Phase 4/4 - partition assignments" end)
+    case assignable_partitions(state) do
+      [] ->
+        Process.send_after(self(), :init_assign_partitions, @startup_delay)
+        {:noreply, state}
+
+      partitions ->
+        assignments = assign_partitions(state, members, partitions)
+        {:ok, new_state} = sync(state, assignments)
+        Logger.debug(fn -> "Connection complete" end)
+        {:noreply, new_state}
+    end
+  end
+
+  def handle_info(:init_assign_partitions, %State{assignments: []} = state) do
+    {:noreply, state}
+  end
+
+  def handle_info(:init_assign_partitions, %State{} = state) do
+    {:noreply, state}
   end
 
   # If the heartbeat gets an error, we need to rebalance.
@@ -212,32 +309,30 @@ defmodule KafkaEx.ConsumerGroup.Manager do
       timeout: session_timeout + @session_timeout_padding
     )
 
-    # crash the worker if we recieve an error, but do it with a meaningful
-    # error message
     if join_response.error_code != :no_error do
-      raise "Error joining consumer group #{group_name}: " <> "#{inspect join_response.error_code}"
-    end
+      message = "Error joining consumer group #{group_name}: " <> "#{inspect join_response.error_code}"
+      Logger.error(message)
+      {:error, join_response.error_code}
+    else
+      Logger.debug(fn -> "Joined consumer group #{group_name}" end)
 
-    Logger.debug(fn -> "Joined consumer group #{group_name}" end)
+      new_state = %State{
+        state |
+        leader_id: join_response.leader_id,
+        member_id: join_response.member_id,
+        generation_id: join_response.generation_id,
+        members: join_response.members
+      }
 
-    new_state = %State{
-      state |
-      leader_id: join_response.leader_id,
-      member_id: join_response.member_id,
-      generation_id: join_response.generation_id
-    }
-
-    assignments =
       if JoinGroupResponse.leader?(join_response) do
         # Leader is responsible for assigning partitions to all group members.
-        partitions = assignable_partitions(new_state)
-        assign_partitions(new_state, join_response.members, partitions)
+
+        {:ok, new_state}
       else
         # Follower does not assign partitions; must be empty.
-        []
+        sync(new_state, [])
       end
-
-    sync(new_state, assignments)
+    end
   end
 
   # `SyncGroupRequest` is used to distribute partition assignments to all group
@@ -310,13 +405,28 @@ defmodule KafkaEx.ConsumerGroup.Manager do
     leave_group_response =
       KafkaEx.leave_group(leave_request, worker_name: worker_name)
 
-    if leave_group_response.error_code == :no_error do
-      Logger.debug(fn -> "Left consumer group #{group_name}" end)
-    else
-      Logger.warn(fn ->
-        "Received error #{inspect leave_group_response.error_code}, " <>
-        "consumer group manager will exit regardless."
-      end)
+    case leave_group_response do
+      {:error, :timeout} ->
+        Logger.warn(fn ->
+            "Received error #{inspect leave_group_response}, " <>
+            "consumer group manager will exit regardless."
+          end)
+
+      {:stop, leave_group_response} ->
+        Logger.warn(fn ->
+            "Received error #{inspect leave_group_response}, " <>
+            "consumer group manager will exit regardless."
+          end)
+
+      _ ->
+        if leave_group_response.error_code == :no_error do
+          Logger.debug(fn -> "Left consumer group #{group_name}" end)
+        else
+          Logger.warn(fn ->
+            "Received error #{inspect leave_group_response.error_code}, " <>
+            "consumer group manager will exit regardless."
+          end)
+        end
     end
 
     {:ok, state}
@@ -416,6 +526,8 @@ defmodule KafkaEx.ConsumerGroup.Manager do
     Logger.warn(fn ->
       "Consumer group #{group_name} encountered nonexistent topic #{topic}"
     end)
+    # send message to retry
+    :nonexistent_topic
   end
   defp warn_if_no_partitions(_partitions, _group_name, _topic), do: :ok
 
