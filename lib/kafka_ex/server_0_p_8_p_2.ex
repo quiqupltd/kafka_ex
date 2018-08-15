@@ -65,7 +65,10 @@ defmodule KafkaEx.Server0P8P2 do
     else
       {:ok, state}
     end
+  end
 
+  def kafka_server_connect(state) do
+    {:noreply, state}
   end
 
   def kafka_server_consumer_group(state) do
