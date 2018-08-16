@@ -36,7 +36,8 @@ defmodule KafkaEx.Server do
       consumer_group_update_interval: nil,
       worker_name: KafkaEx.Server,
       ssl_options: [],
-      use_ssl: false
+      use_ssl: false,
+      ready: false
     )
 
     @type t :: %State{
@@ -50,6 +51,7 @@ defmodule KafkaEx.Server do
       worker_name: atom,
       ssl_options: KafkaEx.ssl_options,
       use_ssl: boolean,
+      ready: boolean,
     }
 
     @spec increment_correlation_id(t) :: t
@@ -77,6 +79,13 @@ defmodule KafkaEx.Server do
     {:noreply, new_state} |
     {:noreply, new_state, timeout | :hibernate} |
     {:stop, reason :: term, new_state} when new_state: term
+  @callback kafka_server_ready_check(state :: State.t) ::
+    {:reply, reply, new_state} |
+    {:reply, reply, new_state, timeout | :hibernate} |
+    {:noreply, new_state} |
+    {:noreply, new_state, timeout | :hibernate} |
+    {:stop, reason, reply, new_state} |
+    {:stop, reason, new_state} when reply: term, new_state: term, reason: term
   @callback kafka_server_produce(request :: ProduceRequest.t, state :: State.t) ::
     {:reply, reply, new_state} |
     {:reply, reply, new_state, timeout | :hibernate} |
@@ -218,6 +227,15 @@ defmodule KafkaEx.Server do
 
       def handle_info(:init_server_connect, state) do
         kafka_server_connect(state)
+      end
+
+      def handle_call(:ready_check, _from, %State{ready: ready} = state) do
+        kafka_server_ready_check(state)
+        {:reply, ready, state}
+      end
+
+      def kafka_server_ready_check(%State{ready: ready} = state) do
+        {:reply, ready, state}
       end
 
       def handle_call(:consumer_group, _from, state) do

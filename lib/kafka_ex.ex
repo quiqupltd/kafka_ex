@@ -520,6 +520,27 @@ defmodule KafkaEx do
   end
 
   @doc """
+  Check to see if worker (server) is ready and connected
+
+  Optional arguments(KeywordList)
+  - worker_name: the worker we want to run this metadata request through, when none is provided the default worker `:kafka_ex` is used
+
+  ## Example
+
+  ```
+  iex> KafkaEx.ready?()
+  false
+  iex> KafkaEx.ready?(:kafka_ex)
+  true
+  ```
+  """
+
+  @spec ready?(atom | pid) :: boolean
+  def ready?(worker \\ Config.default_worker) do
+    Server.call(worker, :ready_check)
+  end
+
+  @doc """
   Returns true if the input is a valid consumer group or :no_consumer_group
   """
   @spec valid_consumer_group?(any) :: boolean
