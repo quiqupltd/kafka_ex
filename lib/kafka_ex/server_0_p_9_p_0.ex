@@ -58,18 +58,15 @@ defmodule KafkaEx.Server0P9P0 do
     use_ssl = Keyword.get(args, :use_ssl, false)
     ssl_options = Keyword.get(args, :ssl_options, [])
 
-    brokers = Enum.map(uris,
-      fn({host, port}) -> %Broker{host: host, port: port, socket: NetworkClient.create_socket(host, port, ssl_options, use_ssl)} end
-    )
 
     state = %State{
-      brokers: brokers,
       consumer_group: consumer_group,
       metadata_update_interval: metadata_update_interval,
       consumer_group_update_interval: consumer_group_update_interval,
       worker_name: name,
       ssl_options: ssl_options,
-      use_ssl: use_ssl
+      use_ssl: use_ssl,
+      uris: uris,
     }
 
     Process.send_after(self(), :init_server_connect, 1000)
@@ -77,14 +74,18 @@ defmodule KafkaEx.Server0P9P0 do
     {:ok, state}
   end
 
-  def kafka_server_connect(%State{brokers: brokers} = state) do
+  def kafka_server_connect(%State{uris: uris, ssl_options: ssl_options, use_ssl: use_ssl} = state) do
+    brokers = Enum.map(uris,
+      fn({host, port}) -> %Broker{host: host, port: port, socket: NetworkClient.create_socket(host, port, ssl_options, use_ssl)} end
+    )
+
     case retrieve_metadata(brokers, 0, config_sync_timeout()) do
       {:error, _reason} ->
         Process.send_after(self(), :init_server_connect, 1000)
         {:noreply, state}
 
       {correlation_id, metadata} ->
-        state = %State{state | metadata: metadata, correlation_id: correlation_id}
+        state = %State{state | metadata: metadata, correlation_id: correlation_id, brokers: brokers}
         # Get the initial "real" broker list and start a regular refresh cycle.
         state = update_metadata(state)
         {:ok, _} = :timer.send_interval(state.metadata_update_interval, :update_metadata)

@@ -37,6 +37,7 @@ defmodule KafkaEx.Server do
       worker_name: KafkaEx.Server,
       ssl_options: [],
       use_ssl: false,
+      uris: [],
       ready: false
     )
 
@@ -51,6 +52,7 @@ defmodule KafkaEx.Server do
       worker_name: atom,
       ssl_options: KafkaEx.ssl_options,
       use_ssl: boolean,
+      uris: [Broker.t],
       ready: boolean,
     }
 
