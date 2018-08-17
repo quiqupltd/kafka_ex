@@ -403,16 +403,21 @@ defmodule KafkaEx.ConsumerGroup.Manager do
       member_id: member_id,
     }
 
-    leave_group_response =
-      KafkaEx.leave_group(leave_request, worker_name: worker_name)
 
-    if leave_group_response.error_code == :no_error do
-      Logger.debug(fn -> "Left consumer group #{group_name}" end)
-    else
-      Logger.warn(fn ->
-        "Received error #{inspect leave_group_response.error_code}, " <>
-        "consumer group manager will exit regardless."
-      end)
+    try do
+      leave_group_response =
+        KafkaEx.leave_group(leave_request, worker_name: worker_name)
+
+      if leave_group_response.error_code == :no_error do
+        Logger.debug(fn -> "Left consumer group #{group_name}" end)
+      else
+        Logger.warn(fn ->
+          "Received error #{inspect leave_group_response.error_code}, " <>
+          "consumer group manager will exit regardless."
+        end)
+      end
+    catch
+      :exit, _ -> IO.puts "RESCUED"
     end
 
     {:ok, state}
