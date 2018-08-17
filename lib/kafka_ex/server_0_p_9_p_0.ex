@@ -58,7 +58,6 @@ defmodule KafkaEx.Server0P9P0 do
     use_ssl = Keyword.get(args, :use_ssl, false)
     ssl_options = Keyword.get(args, :ssl_options, [])
 
-
     state = %State{
       consumer_group: consumer_group,
       metadata_update_interval: metadata_update_interval,
