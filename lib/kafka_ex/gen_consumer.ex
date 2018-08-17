@@ -554,17 +554,16 @@ defmodule KafkaEx.GenConsumer do
     :timeout,
     %State{current_offset: nil, last_commit: nil, worker_name: worker_name} = state
   ) do
-    new_state =
-      if KafkaEx.ready?(worker_name) do
-        %State{
-          load_offsets(state) |
-          last_commit: :erlang.monotonic_time(:milli_seconds)
-        }
-      else
-        state
-      end
+    if KafkaEx.ready?(worker_name) do
 
-    {:noreply, new_state, 0}
+      new_state = %State{
+        load_offsets(state) |
+        last_commit: :erlang.monotonic_time(:milli_seconds)
+      }
+      {:noreply, new_state, 0}
+    else
+      {:noreply, state, 0}
+    end
   end
 
   def handle_info(:timeout, %State{} = state) do
