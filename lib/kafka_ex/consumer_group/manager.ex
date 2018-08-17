@@ -44,6 +44,7 @@ defmodule KafkaEx.ConsumerGroup.Manager do
   @session_timeout 30_000
   @session_timeout_padding 5_000
   @startup_delay 100
+  @retry_delay 1000
 
   @type assignments :: [{binary(), integer()}]
 
@@ -185,7 +186,7 @@ defmodule KafkaEx.ConsumerGroup.Manager do
         # but if it fails within the init/1, it returns {:stop, reason} which exits that process for us
 
         # Re-attempt this stage
-        Process.send_after(self(), :init_start_worker, @startup_delay)
+        Process.send_after(self(), :init_start_worker, @retry_delay)
         {:noreply, state}
     end
   end
@@ -196,7 +197,7 @@ defmodule KafkaEx.ConsumerGroup.Manager do
     if KafkaEx.ready?(worker_name) do
       Process.send_after(self(), :init_join_group, @startup_delay)
     else
-      Process.send_after(self(), :init_wait_for_server, @startup_delay)
+      Process.send_after(self(), :init_wait_for_server, @retry_delay)
     end
 
      {:noreply, state}
@@ -218,7 +219,7 @@ defmodule KafkaEx.ConsumerGroup.Manager do
 
       {:error, _reason} ->
         # retry join
-        Process.send_after(self(), :init_join_group, @startup_delay)
+        Process.send_after(self(), :init_join_group, @retry_delay)
         {:noreply, state}
     end
   end
@@ -236,7 +237,7 @@ defmodule KafkaEx.ConsumerGroup.Manager do
     Logger.debug(fn -> "Phase 4/4 - partition assignments" end)
     case assignable_partitions(state) do
       [] ->
-        Process.send_after(self(), :init_assign_partitions, @startup_delay)
+        Process.send_after(self(), :init_assign_partitions, @retry_delay)
         {:noreply, state}
 
       partitions ->
