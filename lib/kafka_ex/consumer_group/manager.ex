@@ -266,10 +266,10 @@ defmodule KafkaEx.ConsumerGroup.Manager do
   # the group so that the group can rebalance without waiting for a session
   # timeout.
   def terminate(_reason, %State{generation_id: nil, member_id: nil}), do: :ok
-  def terminate(_reason, %State{} = state) do
+  def terminate(reason, %State{worker_name: worker_name} = state) do
     {:ok, _state} = leave(state)
-    Process.unlink(state.worker_name)
-    KafkaEx.stop_worker(state.worker_name)
+    Process.unlink(worker_name)
+    KafkaEx.stop_worker(worker_name)
   end
 
   ### Helpers
