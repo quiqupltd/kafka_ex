@@ -377,7 +377,9 @@ defmodule KafkaEx.Server do
       end
 
       # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
-      def retrieve_metadata(brokers, correlation_id, sync_timeout, topic \\ []), do: retrieve_metadata(brokers, correlation_id, sync_timeout, topic, @retry_count, 0)
+      def retrieve_metadata(brokers, correlation_id, sync_timeout, topic \\ []) do
+        retrieve_metadata(brokers, correlation_id, sync_timeout, topic, @retry_count, 0)
+      end
       # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
       def retrieve_metadata(_, correlation_id, _sync_timeout, topic, 0, error_code) do
         Logger.log(:error, "Metadata request for topic #{inspect topic} failed with error_code #{inspect error_code}")
