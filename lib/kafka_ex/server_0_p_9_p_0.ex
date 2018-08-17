@@ -68,11 +68,13 @@ defmodule KafkaEx.Server0P9P0 do
       uris: uris,
     }
 
+    # sends to kafka_server_connect/1 callback
     Process.send_after(self(), :init_server_connect, @startup_delay)
 
     {:ok, state}
   end
 
+  # callback from :init_server_connect message
   def kafka_server_connect(%State{uris: uris, ssl_options: ssl_options, use_ssl: use_ssl} = state) do
     brokers = Enum.map(uris,
       fn({host, port}) -> %Broker{host: host, port: port, socket: NetworkClient.create_socket(host, port, ssl_options, use_ssl)} end
