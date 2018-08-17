@@ -37,6 +37,10 @@ defmodule KafkaEx.Server0P8P0 do
     {:ok, state}
   end
 
+  def kafka_server_connect(state) do
+    {:noreply, state}
+  end
+
   def start_link(args, name \\ __MODULE__)
 
   def start_link(args, :no_name) do

@@ -73,6 +73,10 @@ defmodule KafkaEx.Server do
     {:ok, state, timeout | :hibernate} |
     :ignore |
     {:stop, reason :: any} when state: any
+  @callback kafka_server_connect(state :: State.t) ::
+    {:noreply, new_state} |
+    {:noreply, new_state, timeout | :hibernate} |
+    {:stop, reason :: term, new_state} when new_state: term
   @callback kafka_server_produce(request :: ProduceRequest.t, state :: State.t) ::
     {:reply, reply, new_state} |
     {:reply, reply, new_state, timeout | :hibernate} |
@@ -210,6 +214,10 @@ defmodule KafkaEx.Server do
 
       def init([args, name]) do
         kafka_server_init([args, name])
+      end
+
+      def handle_info(:init_server_connect, state) do
+        kafka_server_connect(state)
       end
 
       def handle_call(:consumer_group, _from, state) do
