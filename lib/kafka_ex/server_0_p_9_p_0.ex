@@ -69,7 +69,7 @@ defmodule KafkaEx.Server0P9P0 do
       uris: uris,
     }
 
-    Process.send_after(self(), :init_server_connect, 1000)
+    Process.send_after(self(), :init_server_connect, @startup_delay)
 
     {:ok, state}
   end
@@ -81,7 +81,7 @@ defmodule KafkaEx.Server0P9P0 do
 
     case retrieve_metadata(brokers, 0, config_sync_timeout()) do
       {:error, _reason} ->
-        Process.send_after(self(), :init_server_connect, 1000)
+        Process.send_after(self(), :init_server_connect, @retry_delay)
         {:noreply, state}
 
       {correlation_id, metadata} ->

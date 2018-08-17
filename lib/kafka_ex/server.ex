@@ -218,6 +218,8 @@ defmodule KafkaEx.Server do
       @metadata_update_interval       30_000
       @sync_timeout                   1_000
       @ssl_options []
+      @startup_delay 100
+      @retry_delay 1000
 
       def init([args]) do
         kafka_server_init([args])
