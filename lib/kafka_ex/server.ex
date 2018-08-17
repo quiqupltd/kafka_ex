@@ -394,12 +394,17 @@ defmodule KafkaEx.Server do
       end
 
       def update_metadata(state) do
-        {correlation_id, metadata} = retrieve_metadata(state.brokers, state.correlation_id, config_sync_timeout())
-        metadata_brokers = metadata.brokers
-        brokers = state.brokers
-          |> remove_stale_brokers(metadata_brokers)
-          |> add_new_brokers(metadata_brokers, state.ssl_options, state.use_ssl)
-        %{state | metadata: metadata, brokers: brokers, correlation_id: correlation_id + 1}
+        case retrieve_metadata(state.brokers, state.correlation_id, config_sync_timeout()) do
+          {:error, reason} ->
+            state
+
+          {correlation_id, metadata} ->
+            metadata_brokers = metadata.brokers
+            brokers = state.brokers
+              |> remove_stale_brokers(metadata_brokers)
+              |> add_new_brokers(metadata_brokers, state.ssl_options, state.use_ssl)
+            %{state | metadata: metadata, brokers: brokers, correlation_id: correlation_id + 1}
+        end
       end
 
       # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
