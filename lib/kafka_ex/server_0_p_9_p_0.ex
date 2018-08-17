@@ -155,7 +155,7 @@ defmodule KafkaEx.Server0P9P0 do
       raise ConsumerGroupRequiredError, request
     end
 
-    {broker, state} = broker_for_consumer_group_with_update(state)
+    {broker, state} = broker_for_consumer_group_with_update(state, true)
 
     state_out = %{state | correlation_id: state.correlation_id + 1}
 
