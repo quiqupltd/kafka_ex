@@ -94,7 +94,7 @@ defmodule KafkaEx.Server0P9P0 do
           {_, updated_state} = update_consumer_metadata(state)
           {:ok, _} = :timer.send_interval(state.consumer_group_update_interval, :update_consumer_metadata)
 
-          {:noreply, updated_state}
+          {:noreply, %{updated_state | ready: true}}
         else
           {:noreply, state}
         end
