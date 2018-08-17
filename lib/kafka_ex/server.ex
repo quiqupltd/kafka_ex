@@ -432,8 +432,7 @@ defmodule KafkaEx.Server do
         else
           message = "Unable to fetch metadata from any brokers. Timeout is #{sync_timeout}."
           Logger.log(:error, message)
-          raise message
-          :no_metadata_available
+          {:error, message}
         end
       end
 
