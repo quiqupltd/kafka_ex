@@ -5,6 +5,9 @@ config :kafka_ex,
   #
   #  * [{"HOST", port}...]
   #  * CSV - `"HOST:PORT,HOST:PORT[,...]"`
+  #  * {mod, fun, args}
+  #  * &arity_zero_fun/0
+  #  * fn -> ... end
   #
   # If you receive :leader_not_available
   # errors when producing messages, it may be necessary to modify "advertised.host.name" in the
@@ -13,11 +16,17 @@ config :kafka_ex,
   brokers: [
     {"localhost", 9092},
     {"localhost", 9093},
-    {"localhost", 9094},
+    {"localhost", 9094}
   ],
   #
   # OR:
   # brokers: "localhost:9092,localhost:9093,localhost:9094"
+  #
+  # It may be useful to configure your brokers at runtime, for example if you use
+  # service discovery instead of storing your broker hostnames in a config file.
+  # To do this, you can use `{mod, fun, args}` or a zero-arity function, and `KafkaEx`
+  # will invoke your callback when fetching the `:brokers` configuration.
+  # Note that when using this approach you must return a list of host/port pairs.
   #
   # the default consumer group for worker processes, must be a binary (string)
   #    NOTE if you are on Kafka < 0.8.2 or if you want to disable the use of
@@ -48,15 +57,16 @@ config :kafka_ex,
   # see SSL OPTION DESCRIPTIONS - CLIENT SIDE at http://erlang.org/doc/man/ssl.html
   # for supported options
   ssl_options: [
-    cacertfile: System.cwd <> "/ssl/ca-cert",
-    certfile: System.cwd <> "/ssl/cert.pem",
-    keyfile: System.cwd <> "/ssl/key.pem",
+    cacertfile: File.cwd!() <> "/ssl/ca-cert",
+    certfile: File.cwd!() <> "/ssl/cert.pem",
+    keyfile: File.cwd!() <> "/ssl/key.pem"
   ],
   # set this to the version of the kafka broker that you are using
   # include only major.minor.patch versions.  must be at least 0.8.0
-  kafka_version: "0.9.0"
+  kafka_version: "0.10.1"
 
-env_config = Path.expand("#{Mix.env}.exs", __DIR__)
+env_config = Path.expand("#{Mix.env()}.exs", __DIR__)
+
 if File.exists?(env_config) do
   import_config(env_config)
 end

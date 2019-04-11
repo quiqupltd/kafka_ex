@@ -4,7 +4,7 @@ defmodule KafkaEx.Mixfile do
   def project do
     [
       app: :kafka_ex,
-      version: "0.8.3",
+      version: "0.9.0",
       elixir: "~> 1.1",
       dialyzer: [
         plt_add_deps: :transitive,
@@ -36,12 +36,11 @@ defmodule KafkaEx.Mixfile do
   defp deps do
     [
       {:credo, "~> 0.8.10", only: :dev},
-      {:dialyxir, "~> 0.5.1", only: :dev},
+      {:dialyxir, "~> 1.0.0-rc.3", only: :dev},
       {:excoveralls, "~> 0.7", only: :test},
       {:ex_doc, "~> 0.18", only: :dev},
       {:snappy,
-       git: "https://github.com/fdmanana/snappy-erlang-nif",
-       only: [:dev, :test]}
+       git: "https://github.com/fdmanana/snappy-erlang-nif", only: [:dev, :test]}
     ]
   end
 
@@ -50,9 +49,11 @@ defmodule KafkaEx.Mixfile do
   end
 
   defp package do
-    [maintainers: ["Abejide Ayodele", "Dan Swain", "Jack Lund"],
-     files: ["lib", "config/config.exs", "mix.exs", "README.md"],
-     licenses: ["MIT"],
-     links: %{"Github" => "https://github.com/kafkaex/kafka_ex"}]
+    [
+      maintainers: ["Abejide Ayodele", "Dan Swain", "Jack Lund", "Joshua Scott"],
+      files: ["lib", "config/config.exs", "mix.exs", "README.md"],
+      licenses: ["MIT"],
+      links: %{"Github" => "https://github.com/kafkaex/kafka_ex"}
+    ]
   end
 end

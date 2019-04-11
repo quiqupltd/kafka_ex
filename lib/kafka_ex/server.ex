@@ -17,6 +17,7 @@ defmodule KafkaEx.Server do
   alias KafkaEx.Protocol.Produce
   alias KafkaEx.Protocol.Produce.Request, as: ProduceRequest
   alias KafkaEx.Protocol.SyncGroup.Request, as: SyncGroupRequest
+  alias KafkaEx.Protocol.CreateTopics.Request, as: CreateTopicsRequest
   alias KafkaEx.Socket
 
   defmodule State do
@@ -36,28 +37,30 @@ defmodule KafkaEx.Server do
       consumer_group_update_interval: nil,
       worker_name: KafkaEx.Server,
       ssl_options: [],
-      use_ssl: false
+      use_ssl: false,
+      api_versions: []
     )
 
     @type t :: %State{
-      metadata: Metadata.Response.t,
-      brokers: [Broker.t],
-      event_pid: nil | pid,
-      consumer_metadata: ConsumerMetadata.Response.t,
-      correlation_id: integer,
-      metadata_update_interval: nil | integer,
-      consumer_group_update_interval: nil | integer,
-      worker_name: atom,
-      ssl_options: KafkaEx.ssl_options,
-      use_ssl: boolean,
-    }
+            metadata: Metadata.Response.t(),
+            brokers: [Broker.t()],
+            event_pid: nil | pid,
+            consumer_metadata: ConsumerMetadata.Response.t(),
+            correlation_id: integer,
+            metadata_update_interval: nil | integer,
+            consumer_group_update_interval: nil | integer,
+            worker_name: atom,
+            ssl_options: KafkaEx.ssl_options(),
+            use_ssl: boolean,
+            api_versions: [KafkaEx.Protocol.ApiVersions.ApiVersion]
+          }
 
     @spec increment_correlation_id(t) :: t
     def increment_correlation_id(%State{correlation_id: cid} = state) do
       %{state | correlation_id: cid + 1}
     end
 
-    @spec broker_for_partition(t, binary, integer) :: Broker.t | nil
+    @spec broker_for_partition(t, binary, integer) :: Broker.t() | nil
     def broker_for_partition(state, topic, partition) do
       MetadataResponse.broker_for_topic(
         state.metadata,
@@ -69,108 +72,176 @@ defmodule KafkaEx.Server do
   end
 
   @callback kafka_server_init(args :: [term]) ::
-    {:ok, state} |
-    {:ok, state, timeout | :hibernate} |
-    :ignore |
-    {:stop, reason :: any} when state: any
-  @callback kafka_server_produce(request :: ProduceRequest.t, state :: State.t) ::
-    {:reply, reply, new_state} |
-    {:reply, reply, new_state, timeout | :hibernate} |
-    {:noreply, new_state} |
-    {:noreply, new_state, timeout | :hibernate} |
-    {:stop, reason, reply, new_state} |
-    {:stop, reason, new_state} when reply: term, new_state: term, reason: term
-  @callback kafka_server_consumer_group(state :: State.t) ::
-    {:reply, reply, new_state} |
-    {:reply, reply, new_state, timeout | :hibernate} |
-    {:noreply, new_state} |
-    {:noreply, new_state, timeout | :hibernate} |
-    {:stop, reason, reply, new_state} |
-    {:stop, reason, new_state} when reply: term, new_state: term, reason: term
-  @callback kafka_server_fetch(fetch_request :: FetchRequest.t, state :: State.t) ::
-    {:reply, reply, new_state} |
-    {:reply, reply, new_state, timeout | :hibernate} |
-    {:noreply, new_state} |
-    {:noreply, new_state, timeout | :hibernate} |
-    {:stop, reason, reply, new_state} |
-    {:stop, reason, new_state} when reply: term, new_state: term, reason: term
-  @callback kafka_server_offset(topic :: binary, parition :: integer, time :: :calendar.datetime | :latest | :earliest, state :: State.t) ::
-    {:reply, reply, new_state} |
-    {:reply, reply, new_state, timeout | :hibernate} |
-    {:noreply, new_state} |
-    {:noreply, new_state, timeout | :hibernate} |
-    {:stop, reason, reply, new_state} |
-    {:stop, reason, new_state} when reply: term, new_state: term, reason: term
-  @callback kafka_server_offset_fetch(request :: OffsetFetchRequest.t, state :: State.t) ::
-    {:reply, reply, new_state} |
-    {:reply, reply, new_state, timeout | :hibernate} |
-    {:noreply, new_state} |
-    {:noreply, new_state, timeout | :hibernate} |
-    {:stop, reason, reply, new_state} |
-    {:stop, reason, new_state} when reply: term, new_state: term, reason: term
-  @callback kafka_server_offset_commit(request :: OffsetCommitRequest.t, state :: State.t) ::
-    {:reply, reply, new_state} |
-    {:reply, reply, new_state, timeout | :hibernate} |
-    {:noreply, new_state} |
-    {:noreply, new_state, timeout | :hibernate} |
-    {:stop, reason, reply, new_state} |
-    {:stop, reason, new_state} when reply: term, new_state: term, reason: term
-  @callback kafka_server_consumer_group_metadata(state :: State.t) ::
-    {:reply, reply, new_state} |
-    {:reply, reply, new_state, timeout | :hibernate} |
-    {:noreply, new_state} |
-    {:noreply, new_state, timeout | :hibernate} |
-    {:stop, reason, reply, new_state} |
-    {:stop, reason, new_state} when reply: term, new_state: term, reason: term
-  @callback kafka_server_metadata(topic :: binary, state :: State.t) ::
-    {:reply, reply, new_state} |
-    {:reply, reply, new_state, timeout | :hibernate} |
-    {:noreply, new_state} |
-    {:noreply, new_state, timeout | :hibernate} |
-    {:stop, reason, reply, new_state} |
-    {:stop, reason, new_state} when reply: term, new_state: term, reason: term
-  @callback kafka_server_join_group(JoinGroupRequest.t, network_timeout :: integer, state :: State.t) ::
-    {:reply, reply, new_state} |
-    {:reply, reply, new_state, timeout | :hibernate} |
-    {:noreply, new_state} |
-    {:noreply, new_state, timeout | :hibernate} |
-    {:stop, reason, reply, new_state} |
-    {:stop, reason, new_state} when reply: term, new_state: term, reason: term
-  @callback kafka_server_sync_group(SyncGroupRequest.t, network_timeout :: integer, state :: State.t) ::
-    {:reply, reply, new_state} |
-    {:reply, reply, new_state, timeout | :hibernate} |
-    {:noreply, new_state} |
-    {:noreply, new_state, timeout | :hibernate} |
-    {:stop, reason, reply, new_state} |
-    {:stop, reason, new_state} when reply: term, new_state: term, reason: term
-  @callback kafka_server_leave_group(LeaveGroupRequest.t, network_timeout :: integer, state :: State.t) ::
-    {:reply, reply, new_state} |
-    {:reply, reply, new_state, timeout | :hibernate} |
-    {:noreply, new_state} |
-    {:noreply, new_state, timeout | :hibernate} |
-    {:stop, reason, reply, new_state} |
-    {:stop, reason, new_state} when reply: term, new_state: term, reason: term
-  @callback kafka_server_heartbeat(HeartbeatRequest.t, network_timeout :: integer, state :: State.t) ::
-    {:reply, reply, new_state} |
-    {:reply, reply, new_state, timeout | :hibernate} |
-    {:noreply, new_state} |
-    {:noreply, new_state, timeout | :hibernate} |
-    {:stop, reason, reply, new_state} |
-    {:stop, reason, new_state} when reply: term, new_state: term, reason: term
-  @callback kafka_server_update_metadata(state :: State.t) ::
-    {:noreply, new_state} |
-    {:noreply, new_state, timeout | :hibernate} |
-    {:stop, reason :: term, new_state} when new_state: term
-  @callback kafka_server_update_consumer_metadata(state :: State.t) ::
-    {:noreply, new_state} |
-    {:noreply, new_state, timeout | :hibernate} |
-    {:stop, reason :: term, new_state} when new_state: term
+              {:ok, state}
+              | {:ok, state, timeout | :hibernate}
+              | :ignore
+              | {:stop, reason :: any}
+            when state: any
+  @callback kafka_server_produce(
+              request :: ProduceRequest.t(),
+              state :: State.t()
+            ) ::
+              {:reply, reply, new_state}
+              | {:reply, reply, new_state, timeout | :hibernate}
+              | {:noreply, new_state}
+              | {:noreply, new_state, timeout | :hibernate}
+              | {:stop, reason, reply, new_state}
+              | {:stop, reason, new_state}
+            when reply: term, new_state: term, reason: term
+  @callback kafka_server_consumer_group(state :: State.t()) ::
+              {:reply, reply, new_state}
+              | {:reply, reply, new_state, timeout | :hibernate}
+              | {:noreply, new_state}
+              | {:noreply, new_state, timeout | :hibernate}
+              | {:stop, reason, reply, new_state}
+              | {:stop, reason, new_state}
+            when reply: term, new_state: term, reason: term
+  @callback kafka_server_fetch(
+              fetch_request :: FetchRequest.t(),
+              state :: State.t()
+            ) ::
+              {:reply, reply, new_state}
+              | {:reply, reply, new_state, timeout | :hibernate}
+              | {:noreply, new_state}
+              | {:noreply, new_state, timeout | :hibernate}
+              | {:stop, reason, reply, new_state}
+              | {:stop, reason, new_state}
+            when reply: term, new_state: term, reason: term
+  @callback kafka_server_offset(
+              topic :: binary,
+              parition :: integer,
+              time :: :calendar.datetime() | :latest | :earliest,
+              state :: State.t()
+            ) ::
+              {:reply, reply, new_state}
+              | {:reply, reply, new_state, timeout | :hibernate}
+              | {:noreply, new_state}
+              | {:noreply, new_state, timeout | :hibernate}
+              | {:stop, reason, reply, new_state}
+              | {:stop, reason, new_state}
+            when reply: term, new_state: term, reason: term
+  @callback kafka_server_offset_fetch(
+              request :: OffsetFetchRequest.t(),
+              state :: State.t()
+            ) ::
+              {:reply, reply, new_state}
+              | {:reply, reply, new_state, timeout | :hibernate}
+              | {:noreply, new_state}
+              | {:noreply, new_state, timeout | :hibernate}
+              | {:stop, reason, reply, new_state}
+              | {:stop, reason, new_state}
+            when reply: term, new_state: term, reason: term
+  @callback kafka_server_offset_commit(
+              request :: OffsetCommitRequest.t(),
+              state :: State.t()
+            ) ::
+              {:reply, reply, new_state}
+              | {:reply, reply, new_state, timeout | :hibernate}
+              | {:noreply, new_state}
+              | {:noreply, new_state, timeout | :hibernate}
+              | {:stop, reason, reply, new_state}
+              | {:stop, reason, new_state}
+            when reply: term, new_state: term, reason: term
+  @callback kafka_server_consumer_group_metadata(state :: State.t()) ::
+              {:reply, reply, new_state}
+              | {:reply, reply, new_state, timeout | :hibernate}
+              | {:noreply, new_state}
+              | {:noreply, new_state, timeout | :hibernate}
+              | {:stop, reason, reply, new_state}
+              | {:stop, reason, new_state}
+            when reply: term, new_state: term, reason: term
+  @callback kafka_server_metadata(topic :: binary, state :: State.t()) ::
+              {:reply, reply, new_state}
+              | {:reply, reply, new_state, timeout | :hibernate}
+              | {:noreply, new_state}
+              | {:noreply, new_state, timeout | :hibernate}
+              | {:stop, reason, reply, new_state}
+              | {:stop, reason, new_state}
+            when reply: term, new_state: term, reason: term
+  @callback kafka_server_join_group(
+              JoinGroupRequest.t(),
+              network_timeout :: integer,
+              state :: State.t()
+            ) ::
+              {:reply, reply, new_state}
+              | {:reply, reply, new_state, timeout | :hibernate}
+              | {:noreply, new_state}
+              | {:noreply, new_state, timeout | :hibernate}
+              | {:stop, reason, reply, new_state}
+              | {:stop, reason, new_state}
+            when reply: term, new_state: term, reason: term
+  @callback kafka_server_sync_group(
+              SyncGroupRequest.t(),
+              network_timeout :: integer,
+              state :: State.t()
+            ) ::
+              {:reply, reply, new_state}
+              | {:reply, reply, new_state, timeout | :hibernate}
+              | {:noreply, new_state}
+              | {:noreply, new_state, timeout | :hibernate}
+              | {:stop, reason, reply, new_state}
+              | {:stop, reason, new_state}
+            when reply: term, new_state: term, reason: term
+  @callback kafka_server_leave_group(
+              LeaveGroupRequest.t(),
+              network_timeout :: integer,
+              state :: State.t()
+            ) ::
+              {:reply, reply, new_state}
+              | {:reply, reply, new_state, timeout | :hibernate}
+              | {:noreply, new_state}
+              | {:noreply, new_state, timeout | :hibernate}
+              | {:stop, reason, reply, new_state}
+              | {:stop, reason, new_state}
+            when reply: term, new_state: term, reason: term
+  @callback kafka_server_heartbeat(
+              HeartbeatRequest.t(),
+              network_timeout :: integer,
+              state :: State.t()
+            ) ::
+              {:reply, reply, new_state}
+              | {:reply, reply, new_state, timeout | :hibernate}
+              | {:noreply, new_state}
+              | {:noreply, new_state, timeout | :hibernate}
+              | {:stop, reason, reply, new_state}
+              | {:stop, reason, new_state}
+            when reply: term, new_state: term, reason: term
+  @callback kafka_create_topics(
+              [CreateTopicsRequest.t()],
+              network_timeout :: integer,
+              state :: State.t()
+            ) :: {:reply, reply, new_state}
+            when reply: term, new_state: term
+  @callback kafka_delete_topics(
+              [String.t()],
+              network_timeout :: integer,
+              state :: State.t()
+            ) :: {:reply, reply, new_state}
+            when reply: term, new_state: term
+  @callback kafka_api_versions(state :: State.t()) :: {:reply, reply, new_state}
+            when reply: term, new_state: term
+  @callback kafka_server_update_metadata(state :: State.t()) ::
+              {:noreply, new_state}
+              | {:noreply, new_state, timeout | :hibernate}
+              | {:stop, reason :: term, new_state}
+            when new_state: term
+  @callback kafka_server_update_consumer_metadata(state :: State.t()) ::
+              {:noreply, new_state}
+              | {:noreply, new_state, timeout | :hibernate}
+              | {:stop, reason :: term, new_state}
+            when new_state: term
 
-  @default_call_timeout 5_000 # Default from GenServer
+  # Default from GenServer
+  @default_call_timeout 5_000
 
   @doc false
-  @spec call(GenServer.server(), atom | tuple, nil | number | opts :: Keyword.t) :: term
+  @spec call(
+          GenServer.server(),
+          atom | tuple,
+          nil | number | (opts :: Keyword.t())
+        ) :: term
   def call(server, request, opts \\ [])
+
   def call(server, request, opts) when is_list(opts) do
     call(server, request, opts[:timeout])
   end
@@ -179,7 +250,12 @@ defmodule KafkaEx.Server do
     # If using the configured sync_timeout that is less than the default
     # GenServer.call timeout, use the larger value unless explicitly set
     # using opts[:timeout].
-    timeout = max(@default_call_timeout, Application.get_env(:kafka_ex, :sync_timeout, @default_call_timeout))
+    timeout =
+      max(
+        @default_call_timeout,
+        Application.get_env(:kafka_ex, :sync_timeout, @default_call_timeout)
+      )
+
     call(server, request, timeout)
   end
 
@@ -200,8 +276,8 @@ defmodule KafkaEx.Server do
       @wait_time 10
       @min_bytes 1
       @max_bytes 1_000_000
-      @metadata_update_interval       30_000
-      @sync_timeout                   1_000
+      @metadata_update_interval 30_000
+      @sync_timeout 1_000
       @ssl_options []
 
       def init([args]) do
@@ -260,6 +336,18 @@ defmodule KafkaEx.Server do
         kafka_server_heartbeat(request, network_timeout, state)
       end
 
+      def handle_call({:create_topics, requests, network_timeout}, _from, state) do
+        kafka_create_topics(requests, network_timeout, state)
+      end
+
+      def handle_call({:delete_topics, topics, network_timeout}, _from, state) do
+        kafka_delete_topics(topics, network_timeout, state)
+      end
+
+      def handle_call({:api_versions}, _from, state) do
+        kafka_api_versions(state)
+      end
+
       def handle_info(:update_metadata, state) do
         kafka_server_update_metadata(state)
       end
@@ -272,94 +360,224 @@ defmodule KafkaEx.Server do
         {:noreply, state}
       end
 
-      def terminate(_, state) do
-        Logger.log(:debug, "Shutting down worker #{inspect state.worker_name}")
+      def terminate(reason, state) do
+        Logger.log(
+          :debug,
+          "Shutting down worker #{inspect(state.worker_name)}, reason: #{
+            inspect(reason)
+          }"
+        )
+
         if state.event_pid do
           :gen_event.stop(state.event_pid)
         end
-        Enum.each(state.brokers, fn(broker) -> NetworkClient.close_socket(broker.socket) end)
+
+        Enum.each(state.brokers, fn broker ->
+          NetworkClient.close_socket(broker.socket)
+        end)
       end
 
       # KakfaEx.Server behavior default implementations
       # This needs a refactor, but for now make credo pass:
       # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
-      def kafka_server_produce(produce_request, state) do
+      def kafka_server_produce(
+            produce_request,
+            %State{metadata: metadata} = state
+          ) do
         correlation_id = state.correlation_id + 1
-        produce_request_data = Produce.create_request(correlation_id, @client_id, produce_request)
-        {broker, state, corr_id} = case MetadataResponse.broker_for_topic(state.metadata, state.brokers, produce_request.topic, produce_request.partition) do
+
+        produce_request =
+          default_partitioner().assign_partition(produce_request, metadata)
+
+        produce_request_data =
+          try do
+            Produce.create_request(correlation_id, @client_id, produce_request)
+          rescue
+            e in FunctionClauseError -> nil
+          end
+
+        case produce_request_data do
           nil ->
-            {retrieved_corr_id, _} = retrieve_metadata(state.brokers, state.correlation_id, config_sync_timeout(), produce_request.topic)
-            state = %{update_metadata(state) | correlation_id: retrieved_corr_id}
-            {
-              MetadataResponse.broker_for_topic(state.metadata, state.brokers, produce_request.topic, produce_request.partition),
-              state,
-              retrieved_corr_id
-            }
-          broker -> {broker, state, correlation_id}
+            {:reply, {:error, "Invalid produce request"}, state}
+
+          _ ->
+            kafka_server_produce_send_request(
+              correlation_id,
+              produce_request,
+              produce_request_data,
+              state
+            )
         end
+      end
 
-        response = case broker do
-          nil    ->
-            Logger.log(:error, "Leader for topic #{produce_request.topic} is not available")
-            :leader_not_available
-          broker -> case produce_request.required_acks do
-            0 ->  NetworkClient.send_async_request(broker, produce_request_data)
-            _ ->
-              response = broker
-                |> NetworkClient.send_sync_request(
-                     produce_request_data,
-                     config_sync_timeout())
-                |> case do
-                     {:error, reason} -> reason
-                     response -> Produce.parse_response(response)
-                   end
+      # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
+      def kafka_server_produce_send_request(
+            correlation_id,
+            produce_request,
+            produce_request_data,
+            state
+          ) do
+        {broker, state, corr_id} =
+          case MetadataResponse.broker_for_topic(
+                 state.metadata,
+                 state.brokers,
+                 produce_request.topic,
+                 produce_request.partition
+               ) do
+            nil ->
+              {retrieved_corr_id, _} =
+                retrieve_metadata(
+                  state.brokers,
+                  state.correlation_id,
+                  config_sync_timeout(),
+                  produce_request.topic,
+                  state.api_versions
+                )
 
-              # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-              case response do
-                [%KafkaEx.Protocol.Produce.Response{partitions: [%{error_code: :no_error, offset: offset}], topic: topic}] when offset != nil ->
-                  {:ok, offset}
+              state =
+                update_metadata(%{state | correlation_id: retrieved_corr_id})
+
+              {
+                MetadataResponse.broker_for_topic(
+                  state.metadata,
+                  state.brokers,
+                  produce_request.topic,
+                  produce_request.partition
+                ),
+                state,
+                retrieved_corr_id
+              }
+
+            broker ->
+              {broker, state, correlation_id}
+          end
+
+        response =
+          case broker do
+            nil ->
+              Logger.log(
+                :error,
+                "kafka_server_produce_send_request: leader for topic #{
+                  produce_request.topic
+                }/#{produce_request.partition} is not available"
+              )
+
+              :leader_not_available
+
+            broker ->
+              case produce_request.required_acks do
+                0 ->
+                  NetworkClient.send_async_request(broker, produce_request_data)
+
                 _ ->
-                  {:error, response}
+                  response =
+                    broker
+                    |> NetworkClient.send_sync_request(
+                      produce_request_data,
+                      config_sync_timeout()
+                    )
+                    |> case do
+                      {:error, reason} -> reason
+                      response -> Produce.parse_response(response)
+                    end
+
+                  # credo:disable-for-next-line Credo.Check.Refactor.Nesting
+                  case response do
+                    [
+                      %KafkaEx.Protocol.Produce.Response{
+                        partitions: [%{error_code: :no_error, offset: offset}],
+                        topic: topic
+                      }
+                    ]
+                    when offset != nil ->
+                      {:ok, offset}
+
+                    _ ->
+                      {:error, response}
+                  end
               end
           end
-        end
+
         state = %{state | correlation_id: corr_id + 1}
         {:reply, response, state}
       end
 
       def kafka_server_offset(topic, partition, time, state) do
-        offset_request = Offset.create_request(state.correlation_id, @client_id, topic, partition, time)
-        {broker, state} = case MetadataResponse.broker_for_topic(state.metadata, state.brokers, topic, partition) do
-          nil    ->
-            state = update_metadata(state)
-            {MetadataResponse.broker_for_topic(state.metadata, state.brokers, topic, partition), state}
-          broker -> {broker, state}
-        end
+        offset_request =
+          Offset.create_request(
+            state.correlation_id,
+            @client_id,
+            topic,
+            partition,
+            time
+          )
 
-        {response, state} = case broker do
-          nil ->
-            Logger.log(:error, "Leader for topic #{topic} is not available")
-            {:topic_not_found, state}
-          _ ->
-            response = broker
-              |> NetworkClient.send_sync_request(
-                   offset_request,
-                   config_sync_timeout())
-              |> case do
-                   {:error, reason} -> {:error, reason}
-                   response -> Offset.parse_response(response)
-                 end
+        {broker, state} =
+          case MetadataResponse.broker_for_topic(
+                 state.metadata,
+                 state.brokers,
+                 topic,
+                 partition
+               ) do
+            nil ->
+              state = update_metadata(state)
 
-            state = %{state | correlation_id: state.correlation_id + 1}
-            {response, state}
-        end
+              {MetadataResponse.broker_for_topic(
+                 state.metadata,
+                 state.brokers,
+                 topic,
+                 partition
+               ), state}
+
+            broker ->
+              {broker, state}
+          end
+
+        {response, state} =
+          case broker do
+            nil ->
+              Logger.log(
+                :error,
+                "kafka_server_offset: leader for topic #{topic}/#{partition} is not available"
+              )
+
+              {:topic_not_found, state}
+
+            _ ->
+              response =
+                broker
+                |> NetworkClient.send_sync_request(
+                  offset_request,
+                  config_sync_timeout()
+                )
+                |> case do
+                  {:error, reason} -> {:error, reason}
+                  response -> Offset.parse_response(response)
+                end
+
+              state = %{state | correlation_id: state.correlation_id + 1}
+              {response, state}
+          end
 
         {:reply, response, state}
       end
 
       def kafka_server_metadata(topic, state) do
-        {correlation_id, metadata} = retrieve_metadata(state.brokers, state.correlation_id, config_sync_timeout(), topic)
-        updated_state = %{state | metadata: metadata, correlation_id: correlation_id}
+        {correlation_id, metadata} =
+          retrieve_metadata(
+            state.brokers,
+            state.correlation_id,
+            config_sync_timeout(),
+            topic,
+            state.api_versions
+          )
+
+        updated_state = %{
+          state
+          | metadata: metadata,
+            correlation_id: correlation_id
+        }
+
         {:reply, metadata, updated_state}
       end
 
@@ -368,67 +586,180 @@ defmodule KafkaEx.Server do
       end
 
       def update_metadata(state) do
-        {correlation_id, metadata} = retrieve_metadata(state.brokers, state.correlation_id, config_sync_timeout())
-        metadata_brokers = metadata.brokers
-        brokers = state.brokers
+        {correlation_id, metadata} =
+          retrieve_metadata(
+            state.brokers,
+            state.correlation_id,
+            config_sync_timeout(),
+            nil,
+            state.api_versions
+          )
+
+        metadata_brokers =
+          metadata.brokers
+          |> Enum.map(
+            &%{&1 | is_controller: &1.node_id == metadata.controller_id}
+          )
+
+        brokers =
+          state.brokers
           |> remove_stale_brokers(metadata_brokers)
           |> add_new_brokers(metadata_brokers, state.ssl_options, state.use_ssl)
-        %{state | metadata: metadata, brokers: brokers, correlation_id: correlation_id + 1}
+
+        %{
+          state
+          | metadata: metadata,
+            brokers: brokers,
+            correlation_id: correlation_id + 1
+        }
       end
 
       # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
-      def retrieve_metadata(brokers, correlation_id, sync_timeout, topic \\ []), do: retrieve_metadata(brokers, correlation_id, sync_timeout, topic, @retry_count, 0)
+      def retrieve_metadata(
+            brokers,
+            correlation_id,
+            sync_timeout,
+            topic \\ [],
+            server_api_versions \\ [:unsupported]
+          ) do
+        retrieve_metadata(
+          brokers,
+          correlation_id,
+          sync_timeout,
+          topic,
+          @retry_count,
+          0,
+          server_api_versions
+        )
+      end
+
       # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
-      def retrieve_metadata(_, correlation_id, _sync_timeout, topic, 0, error_code) do
-        Logger.log(:error, "Metadata request for topic #{inspect topic} failed with error_code #{inspect error_code}")
+      def retrieve_metadata(
+            brokers,
+            correlation_id,
+            sync_timeout,
+            topic,
+            retry,
+            error_code,
+            server_api_versions \\ [:unsupported]
+          ) do
+        api_version = Metadata.api_version(server_api_versions)
+
+        retrieve_metadata_with_version(
+          brokers,
+          correlation_id,
+          sync_timeout,
+          topic,
+          retry,
+          error_code,
+          api_version
+        )
+      end
+
+      # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
+      def retrieve_metadata_with_version(
+            _,
+            correlation_id,
+            _sync_timeout,
+            topic,
+            0,
+            error_code,
+            server_api_versions
+          ) do
+        Logger.log(
+          :error,
+          "Metadata request for topic #{inspect(topic)} failed with error_code #{
+            inspect(error_code)
+          }"
+        )
+
         {correlation_id, %Metadata.Response{}}
       end
-      # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
-      def retrieve_metadata(brokers, correlation_id, sync_timeout, topic, retry, _error_code) do
-        metadata_request = Metadata.create_request(correlation_id, @client_id, topic)
-        data = first_broker_response(metadata_request, brokers, sync_timeout)
-        if data do
-          response = Metadata.parse_response(data)
 
-          case Enum.find(response.topic_metadatas, &(&1.error_code == :leader_not_available)) do
-            nil -> {correlation_id + 1, response}
+      # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
+      def retrieve_metadata_with_version(
+            brokers,
+            correlation_id,
+            sync_timeout,
+            topic,
+            retry,
+            _error_code,
+            api_version
+          ) do
+        metadata_request =
+          Metadata.create_request(
+            correlation_id,
+            @client_id,
+            topic,
+            api_version
+          )
+
+        data = first_broker_response(metadata_request, brokers, sync_timeout)
+
+        if data do
+          response = Metadata.parse_response(data, api_version)
+
+          case Enum.find(
+                 response.topic_metadatas,
+                 &(&1.error_code == :leader_not_available)
+               ) do
+            nil ->
+              {correlation_id + 1, response}
+
             topic_metadata ->
               :timer.sleep(300)
-              retrieve_metadata(brokers, correlation_id + 1, sync_timeout, topic, retry - 1, topic_metadata.error_code)
+
+              retrieve_metadata_with_version(
+                brokers,
+                correlation_id + 1,
+                sync_timeout,
+                topic,
+                retry - 1,
+                topic_metadata.error_code,
+                api_version
+              )
           end
         else
-          message = "Unable to fetch metadata from any brokers. Timeout is #{sync_timeout}."
+          message =
+            "Unable to fetch metadata from any brokers. Timeout is #{
+              sync_timeout
+            }."
+
           Logger.log(:error, message)
           raise message
           :no_metadata_available
         end
       end
 
-      defoverridable [
-        kafka_server_produce: 2, kafka_server_offset: 4,
-        kafka_server_metadata: 2, kafka_server_update_metadata: 1,
-      ]
+      defoverridable kafka_server_produce: 2,
+                     kafka_server_offset: 4,
+                     kafka_server_metadata: 2,
+                     kafka_server_update_metadata: 1
 
       defp kafka_common_init(args, name) do
         use_ssl = Keyword.get(args, :use_ssl, false)
         ssl_options = Keyword.get(args, :ssl_options, [])
 
         uris = Keyword.get(args, :uris, [])
-        metadata_update_interval = Keyword.get(
-          args,
-          :metadata_update_interval,
-          @metadata_update_interval
-        )
 
-        brokers = for {host, port} <- uris do
-          connect_broker(host, port, ssl_options, use_ssl)
-        end
+        metadata_update_interval =
+          Keyword.get(
+            args,
+            :metadata_update_interval,
+            @metadata_update_interval
+          )
 
-        {correlation_id, metadata} = retrieve_metadata(
-          brokers,
-          0,
-          config_sync_timeout()
-        )
+        brokers =
+          for {host, port} <- uris do
+            connect_broker(host, port, ssl_options, use_ssl)
+          end
+
+        {correlation_id, metadata} =
+          retrieve_metadata(
+            brokers,
+            0,
+            config_sync_timeout()
+          )
 
         state = %State{
           metadata: metadata,
@@ -437,14 +768,17 @@ defmodule KafkaEx.Server do
           metadata_update_interval: metadata_update_interval,
           ssl_options: ssl_options,
           use_ssl: use_ssl,
-          worker_name: name
+          worker_name: name,
+          api_versions: [:unsupported]
         }
 
         state = update_metadata(state)
-        {:ok, _} = :timer.send_interval(
-          state.metadata_update_interval,
-          :update_metadata
-        )
+
+        {:ok, _} =
+          :timer.send_interval(
+            state.metadata_update_interval,
+            :update_metadata
+          )
 
         state
       end
@@ -459,9 +793,9 @@ defmodule KafkaEx.Server do
 
       defp client_request(request, state) do
         %{
-          request |
-          client_id: @client_id,
-          correlation_id: state.correlation_id
+          request
+          | client_id: @client_id,
+            correlation_id: state.correlation_id
         }
       end
 
@@ -471,10 +805,12 @@ defmodule KafkaEx.Server do
         case State.broker_for_partition(state, topic, partition) do
           nil ->
             updated_state = update_metadata(state)
+
             {
               State.broker_for_partition(updated_state, topic, partition),
               updated_state
             }
+
           broker ->
             {broker, state}
         end
@@ -483,31 +819,58 @@ defmodule KafkaEx.Server do
       # assumes module.create_request(request) and module.parse_response
       # both work
       defp network_request(request, module, state) do
-        {broker, updated_state} = broker_for_partition_with_update(
-          state,
-          request.topic,
-          request.partition
-        )
+        {broker, updated_state} =
+          broker_for_partition_with_update(
+            state,
+            request.topic,
+            request.partition
+          )
 
         case broker do
           nil ->
             Logger.error(fn ->
-              "Leader for topic #{request.topic} is not available"
+              "network_request: leader for topic #{request.topic}/#{
+                request.partition
+              } is not available"
             end)
-            {{:error, :topic_not_found}, updated_state}
-          _ ->
-            wire_request = request
-            |> client_request(updated_state)
-            |> module.create_request
 
-            response = broker
+            {{:error, :topic_not_found}, updated_state}
+
+          _ ->
+            wire_request =
+              request
+              |> client_request(updated_state)
+              |> module.create_request
+
+            response =
+              broker
               |> NetworkClient.send_sync_request(
-                   wire_request,
-                   config_sync_timeout())
+                wire_request,
+                config_sync_timeout()
+              )
               |> case do
-                   {:error, reason} -> {:error, reason}
-                   response -> module.parse_response(response)
-                 end
+                {:error, reason} ->
+                  {:error, reason}
+
+                response ->
+                  try do
+                    module.parse_response(response)
+                  rescue
+                    _ ->
+                      Logger.error(
+                        "Failed to parse a response from the server: #{
+                          inspect(response)
+                        }"
+                      )
+
+                      Kernel.reraise(
+                        "Parse error during #{inspect(module)}.parse_response. Couldn't parse: #{
+                          inspect(response)
+                        }",
+                        System.stacktrace()
+                      )
+                  end
+              end
 
             state_out = State.increment_correlation_id(updated_state)
             {response, state_out}
@@ -515,30 +878,82 @@ defmodule KafkaEx.Server do
       end
 
       defp remove_stale_brokers(brokers, metadata_brokers) do
-        {brokers_to_keep, brokers_to_remove} = apply(Enum, :partition, [brokers, fn(broker) ->
-          Enum.find_value(metadata_brokers, &(broker.node_id == -1 || (broker.node_id == &1.node_id) && broker.socket && Socket.info(broker.socket)))
-        end])
+        {brokers_to_keep, brokers_to_remove} =
+          apply(Enum, :partition, [
+            brokers,
+            fn broker ->
+              Enum.find_value(
+                metadata_brokers,
+                &(broker.node_id == -1 ||
+                    (broker.node_id == &1.node_id && broker.socket &&
+                       Socket.info(broker.socket)))
+              )
+            end
+          ])
+
         case length(brokers_to_keep) do
-          0 -> brokers_to_remove
-          _ -> Enum.each(brokers_to_remove, fn(broker) ->
-            Logger.log(:debug, "Closing connection to broker #{broker.node_id}: #{inspect broker.host} on port #{inspect broker.port}")
-            NetworkClient.close_socket(broker.socket)
-          end)
+          0 ->
+            brokers_to_remove
+
+          _ ->
+            Enum.each(brokers_to_remove, fn broker ->
+              Logger.log(
+                :debug,
+                "Closing connection to broker #{broker.node_id}: #{
+                  inspect(broker.host)
+                } on port #{inspect(broker.port)}"
+              )
+
+              NetworkClient.close_socket(broker.socket)
+            end)
+
             brokers_to_keep
         end
       end
 
       defp add_new_brokers(brokers, [], _, _), do: brokers
-      defp add_new_brokers(brokers, [metadata_broker|metadata_brokers], ssl_options, use_ssl) do
+
+      defp add_new_brokers(
+             brokers,
+             [metadata_broker | metadata_brokers],
+             ssl_options,
+             use_ssl
+           ) do
         case Enum.find(brokers, &(metadata_broker.node_id == &1.node_id)) do
-          nil -> Logger.log(:debug, "Establishing connection to broker #{metadata_broker.node_id}: #{inspect metadata_broker.host} on port #{inspect metadata_broker.port}")
-            add_new_brokers([%{metadata_broker | socket: NetworkClient.create_socket(metadata_broker.host, metadata_broker.port, ssl_options, use_ssl)} | brokers], metadata_brokers, ssl_options, use_ssl)
-          _ -> add_new_brokers(brokers, metadata_brokers, ssl_options, use_ssl)
+          nil ->
+            Logger.log(
+              :debug,
+              "Establishing connection to broker #{metadata_broker.node_id}: #{
+                inspect(metadata_broker.host)
+              } on port #{inspect(metadata_broker.port)}"
+            )
+
+            add_new_brokers(
+              [
+                %{
+                  metadata_broker
+                  | socket:
+                      NetworkClient.create_socket(
+                        metadata_broker.host,
+                        metadata_broker.port,
+                        ssl_options,
+                        use_ssl
+                      )
+                }
+                | brokers
+              ],
+              metadata_brokers,
+              ssl_options,
+              use_ssl
+            )
+
+          _ ->
+            add_new_brokers(brokers, metadata_brokers, ssl_options, use_ssl)
         end
       end
 
       defp first_broker_response(request, brokers, timeout) do
-        Enum.find_value(brokers, fn(broker) ->
+        Enum.find_value(brokers, fn broker ->
           if Broker.connected?(broker) do
             # credo:disable-for-next-line Credo.Check.Refactor.Nesting
             case NetworkClient.send_sync_request(broker, request, timeout) do
@@ -551,6 +966,10 @@ defmodule KafkaEx.Server do
 
       defp config_sync_timeout(timeout \\ nil) do
         timeout || Application.get_env(:kafka_ex, :sync_timeout, @sync_timeout)
+      end
+
+      defp default_partitioner do
+        Application.get_env(:kafka_ex, :partitioner, KafkaEx.DefaultPartitioner)
       end
     end
   end
